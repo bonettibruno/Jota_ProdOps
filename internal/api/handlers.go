@@ -91,7 +91,7 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 	var citations []core.Citation
 	var reply string
 
-	if retriever != nil {
+	if retriever != nil && core.ShouldUseRAG(agent, req.Message) {
 		reply, citations = core.BuildReplyWithRAG(agent, req.Message, retriever)
 	} else {
 		reply = core.GenerateReply(agent, history)
