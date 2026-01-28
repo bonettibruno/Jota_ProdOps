@@ -3,24 +3,29 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/bonettibruno/Jota_ProdOps/internal/core"
 )
 
 type MessageRequest struct {
-	Message string `json:"message"`
+	ConversationID string `json:"conversation_id"`
+	Message        string `json:"message"`
 }
 
 type MessageResponse struct {
-	Reply  string `json:"reply"`
-	Action string `json:"action"`
-	Agent  string `json:"agent"`
+	Reply        string `json:"reply"`
+	Action       string `json:"action"`
+	Agent        string `json:"agent"`
+	HistoryCount int    `json:"history_count"`
 }
 
 func HealthHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok"))
 }
+
+var store = core.NewConversationStore(20)
 
 func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -34,15 +39,41 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agent := core.RouteAgent(req.Message)
-	reply := core.AgentReply(agent)
+	if req.ConversationID == "" {
+		http.Error(w, "conversation_id is required", http.StatusBadRequest)
+		return
+	}
+
+	store.Add(req.ConversationID, core.ChatMessage{
+		Role:      "user",
+		Text:      req.Message,
+		Timestamp: time.Now(),
+	})
+
+	history := store.Get(req.ConversationID)
+
+	agent, ok := store.GetAgent(req.ConversationID)
+	if !ok {
+		agent = core.RouteAgent(req.Message)
+		store.SetAgent(req.ConversationID, agent)
+	}
+
+	reply := core.GenerateReply(agent, history)
+
+	store.Add(req.ConversationID, core.ChatMessage{
+		Role:      "assistant",
+		Text:      reply,
+		Timestamp: time.Now(),
+	})
 
 	resp := MessageResponse{
-		Reply:  reply,
-		Action: "reply",
-		Agent:  agent,
+		Reply:        reply,
+		Action:       "reply",
+		Agent:        agent,
+		HistoryCount: len(history) + 1,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+
 }
