@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bonettibruno/Jota_ProdOps/internal/core"
+	"github.com/bonettibruno/Jota_ProdOps/internal/rag"
 )
 
 type MessageRequest struct {
@@ -15,11 +16,12 @@ type MessageRequest struct {
 }
 
 type MessageResponse struct {
-	Reply        string `json:"reply"`
-	Action       string `json:"action"`
-	Agent        string `json:"agent"`
-	HistoryCount int    `json:"history_count"`
-	TraceID      string `json:"trace_id"`
+	Reply        string          `json:"reply"`
+	Action       string          `json:"action"`
+	Agent        string          `json:"agent"`
+	HistoryCount int             `json:"history_count"`
+	TraceID      string          `json:"trace_id"`
+	Citations    []core.Citation `json:"citations,omitempty"`
 }
 
 func HealthHandler(w http.ResponseWriter, r *http.Request) {
@@ -28,6 +30,18 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 var store = core.NewConversationStore(20)
+
+var retriever *rag.Retriever
+
+func init() {
+	r, err := rag.NewRetriever("kb/RAG_JOTA_RESUMIDO.md")
+	if err != nil {
+		log.Printf("event=rag_init_failed error=%v", err)
+		return
+	}
+	retriever = r
+	log.Printf("event=rag_ready source=kb/RAG_JOTA_RESUMIDO.md")
+}
 
 func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
@@ -57,7 +71,6 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("trace=%s event=message_received conversation_id=%s msg=%q", traceID, req.ConversationID, req.Message)
 
-	// salva msg do usuário
 	store.Add(req.ConversationID, core.ChatMessage{
 		Role:      "user",
 		Text:      req.Message,
@@ -66,7 +79,6 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 
 	history := store.Get(req.ConversationID)
 
-	// sticky agent
 	agent, ok := store.GetAgent(req.ConversationID)
 	if !ok {
 		agent = core.RouteAgent(req.Message)
@@ -76,16 +88,21 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("trace=%s event=agent_sticky conversation_id=%s agent=%s sticky=true", traceID, req.ConversationID, agent)
 	}
 
-	reply := core.GenerateReply(agent, history)
+	var citations []core.Citation
+	var reply string
 
-	// salva msg do assistant
+	if retriever != nil {
+		reply, citations = core.BuildReplyWithRAG(agent, req.Message, retriever)
+	} else {
+		reply = core.GenerateReply(agent, history)
+	}
+
 	store.Add(req.ConversationID, core.ChatMessage{
 		Role:      "assistant",
 		Text:      reply,
 		Timestamp: time.Now(),
 	})
 
-	// opcional: colocar trace no header também
 	w.Header().Set("X-Trace-Id", traceID)
 	w.Header().Set("Content-Type", "application/json")
 
@@ -95,6 +112,7 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 		Agent:        agent,
 		HistoryCount: len(history) + 1,
 		TraceID:      traceID,
+		Citations:    citations,
 	}
 
 	_ = json.NewEncoder(w).Encode(resp)
