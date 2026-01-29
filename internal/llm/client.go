@@ -9,5 +9,17 @@ type RouterDecision struct {
 }
 
 type Client interface {
-	RouteAgent(ctx context.Context, traceID string, message string, history []string) (RouterDecision, error)
+	RouteAgent(
+		ctx context.Context,
+		traceID string,
+		message string,
+		history []string,
+	) (RouterDecision, error)
+
+	GenerateText(
+		ctx context.Context,
+		traceID string,
+		systemPrompt string,
+		userPrompt string,
+	) (string, error)
 }

@@ -19,11 +19,13 @@ func main() {
 	}
 	addr := ":" + port
 
+	// Inicializa LLM
 	g, err := gemini.New()
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	// Injeta LLM no API layer
 	api.SetLLMClient(g)
 
 	mux := http.NewServeMux()

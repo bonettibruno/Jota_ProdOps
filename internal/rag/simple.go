@@ -14,8 +14,9 @@ type Chunk struct {
 }
 
 type Retriever struct {
-	path   string
-	chunks []Chunk
+	path     string
+	fullText string
+	chunks   []Chunk
 }
 
 func NewRetriever(path string) (*Retriever, error) {
@@ -28,8 +29,9 @@ func NewRetriever(path string) (*Retriever, error) {
 	chunks := splitMarkdownByHeadings(text)
 
 	return &Retriever{
-		path:   path,
-		chunks: chunks,
+		path:     path,
+		fullText: text,
+		chunks:   chunks,
 	}, nil
 }
 
@@ -124,4 +126,11 @@ func scoreChunk(qTokens []string, text string) int {
 		}
 	}
 	return score
+}
+
+func (r *Retriever) AsText() string {
+	if r == nil {
+		return ""
+	}
+	return r.fullText
 }
