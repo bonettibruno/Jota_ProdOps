@@ -157,9 +157,7 @@ Isso permite que a IA saiba que pode transferir a conversa para o especialista c
 
 ### 🔑 Configurar a API Key
 
-```bash
-export GEMINI_API_KEY="sua_chave_aqui"
-```
+Coloque suas credenciais do Google AI Studio num arquivo .env, seguindo o exemplo. Além disso, escolha o modelo de IA e a porta a ser utilizada.
 
 ---
 
