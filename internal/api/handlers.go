@@ -85,6 +85,9 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// --- LOG DE ENTRADA ---
+	log.Printf("trace=%s conv=%s event=request_received msg=\"%s\"", traceID, req.ConversationID, req.Message)
+
 	// Registro inicial da mensagem do usuário
 	store.Add(req.ConversationID, core.ChatMessage{
 		Role:      "user",
@@ -96,11 +99,9 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 	var currentAction string = "reply"
 	var finalAgent string
 
-	// LOOP DE PROCESSAMENTO (Máximo 3 iterações para evitar loops infinitos)
 	for i := 0; i < 3; i++ {
 		history := store.Get(req.ConversationID)
 
-		// Determinar o agente atual
 		agent, ok := store.GetAgent(req.ConversationID)
 		if !ok {
 			agent = "atendimento_geral"
@@ -119,36 +120,33 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 			ragText = retriever.AsText()
 		}
 
-		// Executa o cérebro do agente
 		plan, err := brain.Run(r.Context(), llmClient, traceID, history, req.Message, ragText)
 		if err != nil {
-			log.Printf("trace=%s event=brain_error agent=%s err=%v", traceID, agent, err)
+			// --- LOG DE ERRO NO BRAIN ---
+			log.Printf("trace=%s conv=%s event=brain_error agent=%s err=%v", traceID, req.ConversationID, agent, err)
 			reply = "Desculpe, tive um problema técnico. Pode repetir?"
 			break
 		}
 
-		// LOGICA DE HANDOFF SILENCIOSO
 		if plan.Action == "change_agent" {
 			newAgent := plan.ChangeAgent
 			if newAgent == "" || newAgent == "null" {
 				newAgent = "atendimento_geral"
 			}
 
-			log.Printf("trace=%s event=silent_handoff from=%s to=%s", traceID, agent, newAgent)
-			store.SetAgent(req.ConversationID, newAgent)
+			// --- LOG DE HANDOFF DETALHADO ---
+			log.Printf("trace=%s conv=%s event=silent_handoff from=%s to=%s", traceID, req.ConversationID, agent, newAgent)
 
-			// O segredo: Não definimos 'reply' aqui.
-			// O loop continuará e chamará o próximo agente imediatamente.
+			store.SetAgent(req.ConversationID, newAgent)
 			continue
 		}
 
-		// Se não foi troca de agente, processamos a resposta final
 		currentAction = plan.Action
 		reply = finalizeResponse(plan)
 		break
 	}
 
-	// Registro da resposta final no histórico
+	// Registro da resposta final
 	store.Add(req.ConversationID, core.ChatMessage{
 		Role:      "assistant",
 		Text:      reply,
@@ -165,10 +163,9 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 		TraceID:      traceID,
 	})
 
-	log.Printf("trace=%s event=replied agent=%s latency=%v", traceID, finalAgent, time.Since(start))
+	log.Printf("trace=%s conv=%s event=replied agent=%s latency=%v", traceID, req.ConversationID, finalAgent, time.Since(start))
 }
 
-// Auxiliar para limpar a mensagem final sem lógica de troca de agente
 func finalizeResponse(plan core.ActionPlan) string {
 	res := plan.Message
 	if plan.Action == "ask" || plan.Action == "collect_data" {
