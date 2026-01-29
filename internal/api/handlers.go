@@ -183,6 +183,16 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 		_ = fullHistory
 	}
 
+	if currentAction == "call_api" {
+		// Exemplo de como seria a integração real
+		log.Printf("trace=%s conv=%s event=EXECUTING_TOOL tool=abrir_med status=simulated", traceID, req.ConversationID)
+
+		// Aqui entraria a chamada de rede:
+		// bancoJota.AbrirProcessoMED(req.ConversationID, history)
+
+		reply = "Iniciei o protocolo MED (Mecanismo Especial de Devolução) para você. Vou acompanhar o processo e te aviso por aqui."
+	}
+
 	// 6. Resposta Final para o Canal (WhatsApp/Web)
 	w.Header().Set("X-Trace-Id", traceID)
 	w.Header().Set("Content-Type", "application/json")
@@ -202,6 +212,15 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 
 func finalizeResponse(plan core.ActionPlan) string {
 	res := plan.Message
+
+	// Tratamento especial para chamadas de API (Tools)
+	if plan.Action == "call_api" {
+		if res == "" {
+			res = "Entendido. Estou acionando nossos sistemas de segurança agora para processar sua solicitação."
+		}
+		res += "\n\n[Protocolo de Segurança Ativado]"
+	}
+
 	if plan.Action == "ask" || plan.Action == "collect_data" {
 		if plan.NextQuestion != "" {
 			if res != "" {
@@ -210,6 +229,11 @@ func finalizeResponse(plan core.ActionPlan) string {
 			res += plan.NextQuestion
 		}
 	}
+
+	if plan.Action == "escalate" {
+		res = "Sinto muito por isso. " + res + "\n\nEstou transferindo você agora para um especialista humano em segurança. Por favor, aguarde."
+	}
+
 	if res == "" {
 		return "Como posso te ajudar com isso?"
 	}
