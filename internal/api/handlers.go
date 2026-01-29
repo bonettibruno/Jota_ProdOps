@@ -30,6 +30,16 @@ type MessageResponse struct {
 }
 
 var llmClient llm.Client
+var store = core.NewConversationStore(20)
+var retriever *rag.Retriever
+
+// Agent mapping for the Orchestrator
+var brains = map[string]core.AgentBrain{
+	"open_finance":      &openfinance.Brain{},
+	"golpe_med":         &golpemed.Brain{},
+	"atendimento_geral": &atendimento.Brain{},
+	"criacao_conta":     &criacaoconta.Brain{},
+}
 
 func SetLLMClient(c llm.Client) {
 	llmClient = c
@@ -45,17 +55,8 @@ func MetricsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(core.GetMetrics())
 }
 
-var store = core.NewConversationStore(20)
-var retriever *rag.Retriever
-
-var brains = map[string]core.AgentBrain{
-	"open_finance":      &openfinance.Brain{},
-	"golpe_med":         &golpemed.Brain{},
-	"atendimento_geral": &atendimento.Brain{},
-	"criacao_conta":     &criacaoconta.Brain{},
-}
-
 func init() {
+	// Initialize RAG retriever with knowledge base
 	r, err := rag.NewRetriever("kb/RAG_JOTA_RESUMIDO.md")
 	if err != nil {
 		log.Printf("event=rag_init_failed error=%v", err)
@@ -67,10 +68,9 @@ func init() {
 
 func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-
 	m := core.GetMetrics()
 
-	// 1. Rastreabilidade: Garantir que toda requisição tenha um ID único
+	// 1. Traceability: Unique ID for request tracking
 	traceID := r.Header.Get("X-Trace-Id")
 	if traceID == "" {
 		traceID = newTraceID()
@@ -81,7 +81,7 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Ingestão e Validação
+	// 2. Request validation
 	var req MessageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Printf("trace=%s event=bad_json error=%v", traceID, err)
@@ -96,7 +96,7 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("trace=%s conv=%s event=request_received msg=\"%s\"", traceID, req.ConversationID, req.Message)
 
-	// 3. Persistência da entrada do usuário
+	// 3. Persist user input in history
 	store.Add(req.ConversationID, core.ChatMessage{
 		Role:      "user",
 		Text:      req.Message,
@@ -107,17 +107,16 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 	var currentAction string = "reply"
 	var finalAgent string
 
-	// --- OTIMIZAÇÃO RAG: Busca contextual única para economizar tokens e latência ---
+	// 4. Contextual RAG search
 	ragText := ""
 	if retriever != nil {
-		// Buscamos os 3 trechos mais relevantes da base de conhecimento
 		ragText = retriever.SearchAsText(req.Message, 3)
 		if ragText != "" {
 			log.Printf("trace=%s conv=%s event=rag_retrieval status=success", traceID, req.ConversationID)
 		}
 	}
 
-	// 4. Loop de Orquestração (Policy Engine / Handoff Silencioso)
+	// 5. Orchestration Loop (Policy Engine / Silent Handoff)
 	for i := 0; i < 3; i++ {
 		history := store.Get(req.ConversationID)
 
@@ -134,7 +133,7 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		// Execução do "Cérebro" do Agente atual
+		// Execute specialized Agent Brain
 		plan, err := brain.Run(r.Context(), llmClient, traceID, history, req.Message, ragText)
 		if err != nil {
 			log.Printf("trace=%s conv=%s event=brain_error agent=%s err=%v", traceID, req.ConversationID, agent, err)
@@ -142,7 +141,7 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		// Verifica se o Agente solicitou troca de especialista (Handoff)
+		// Handle agent transition (Handoff)
 		if plan.Action == "change_agent" {
 			m.IncHandoff()
 			newAgent := plan.ChangeAgent
@@ -154,46 +153,35 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 				traceID, req.ConversationID, agent, newAgent, plan.HandoffReason)
 
 			store.SetAgent(req.ConversationID, newAgent)
-			continue // Re-processa com o novo agente sem responder ao usuário ainda
+			continue // Re-process with the new specialist
 		}
 
-		// Se chegou aqui, o agente decidiu responder ou agir
 		currentAction = plan.Action
 		reply = finalizeResponse(plan)
 		break
 	}
 
-	// 5. Registro da resposta final na memória
+	// 6. Persist final assistant response
 	store.Add(req.ConversationID, core.ChatMessage{
 		Role:      "assistant",
 		Text:      reply,
 		Timestamp: time.Now(),
 	})
 
-	// Este sinal indica que a IA identificou uma situação que exige um especialista humano
+	// Handle critical human intervention
 	if currentAction == "escalate" {
 		m.IncEscalate()
-		fullHistory := store.Get(req.ConversationID)
-
-		log.Printf("trace=%s conv=%s event=HUMAN_INTERVENTION_REQUIRED level=CRITICAL agent=%s reason=\"Ação de risco detectada\"",
+		log.Printf("trace=%s conv=%s event=HUMAN_INTERVENTION_REQUIRED level=CRITICAL agent=%s",
 			traceID, req.ConversationID, finalAgent)
-
-		// Aqui você enviaria o 'fullHistory' para o seu sistema de Chat (ex: Intercom/Zendesk)
-		// O humano já recebe a conversa pronta, sem precisar perguntar tudo de novo.
-		_ = fullHistory
 	}
 
+	// Handle automated banking tools (e.g., MED)
 	if currentAction == "call_api" {
-		// Exemplo de como seria a integração real
 		log.Printf("trace=%s conv=%s event=EXECUTING_TOOL tool=abrir_med status=simulated", traceID, req.ConversationID)
-
-		// Aqui entraria a chamada de rede:
-		// bancoJota.AbrirProcessoMED(req.ConversationID, history)
-
 		reply = "Iniciei o protocolo MED (Mecanismo Especial de Devolução) para você. Vou acompanhar o processo e te aviso por aqui."
 	}
 
-	// 6. Resposta Final para o Canal (WhatsApp/Web)
+	// 7. Send final response
 	w.Header().Set("X-Trace-Id", traceID)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(MessageResponse{
@@ -205,7 +193,6 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 	})
 
 	m.IncRequest(finalAgent)
-	// Log de Observabilidade: Latência é a métrica principal aqui
 	log.Printf("trace=%s conv=%s event=replied agent=%s action=%s latency=%v",
 		traceID, req.ConversationID, finalAgent, currentAction, time.Since(start))
 }
@@ -213,25 +200,22 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 func finalizeResponse(plan core.ActionPlan) string {
 	res := plan.Message
 
-	// Tratamento especial para chamadas de API (Tools)
-	if plan.Action == "call_api" {
+	// Format specific action types
+	switch plan.Action {
+	case "call_api":
 		if res == "" {
-			res = "Entendido. Estou acionando nossos sistemas de segurança agora para processar sua solicitação."
+			res = "Entendido. Estou acionando nossos sistemas de segurança agora."
 		}
 		res += "\n\n[Protocolo de Segurança Ativado]"
-	}
-
-	if plan.Action == "ask" || plan.Action == "collect_data" {
+	case "ask", "collect_data":
 		if plan.NextQuestion != "" {
 			if res != "" {
 				res += "\n\n"
 			}
 			res += plan.NextQuestion
 		}
-	}
-
-	if plan.Action == "escalate" {
-		res = "Sinto muito por isso. " + res + "\n\nEstou transferindo você agora para um especialista humano em segurança. Por favor, aguarde."
+	case "escalate":
+		res = "Sinto muito por isso. " + res + "\n\nEstou transferindo você agora para um especialista humano. Por favor, aguarde."
 	}
 
 	if res == "" {

@@ -11,7 +11,7 @@ import (
 
 type Brain struct{}
 
-// Alterado para 'client any' para satisfazer a interface core.AgentBrain
+// Run executes the Security and MED (Mecanismo Especial de Devolução) specialist agent
 func (b *Brain) Run(
 	ctx context.Context,
 	client any,
@@ -21,13 +21,13 @@ func (b *Brain) Run(
 	ragContext string,
 ) (core.ActionPlan, error) {
 
-	// Recupera o tipo real do cliente para usar o GenerateText
+	// Type Assertion: retrieve specific LLM client interface
 	llmClient := client.(llm.Client)
 
 	systemPrompt := buildSystemPrompt(ragContext)
 	userPrompt := buildUserPrompt(history, userMessage)
 
-	// Agora usamos o llmClient convertido
+	// Execute LLM text generation
 	raw, err := llmClient.GenerateText(ctx, traceID, systemPrompt, userPrompt)
 	if err != nil {
 		return core.ActionPlan{}, err
@@ -35,12 +35,13 @@ func (b *Brain) Run(
 
 	var plan core.ActionPlan
 	if err := json.Unmarshal([]byte(raw), &plan); err != nil {
-		return core.ActionPlan{}, fmt.Errorf("invalid ActionPlan JSON: %w", err)
+		return core.ActionPlan{}, fmt.Errorf("failed to decode ActionPlan JSON: %w", err)
 	}
 
 	return plan, nil
 }
 
+// buildSystemPrompt defines the agent persona and behavioral guidelines
 func buildSystemPrompt(ragContext string) string {
 	return fmt.Sprintf(`Você é o Agent Especialista em Segurança e Golpe MED do Jota. Sua identidade: "golpe_med".
 
@@ -71,6 +72,7 @@ Base de conhecimento (RAG):
 %s`, ragContext)
 }
 
+// buildUserPrompt formats conversation history and current input for the LLM
 func buildUserPrompt(history []core.ChatMessage, userMessage string) string {
 	h := ""
 	for _, msg := range history {

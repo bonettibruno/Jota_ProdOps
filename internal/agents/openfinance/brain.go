@@ -11,7 +11,7 @@ import (
 
 type Brain struct{}
 
-// Run agora implementa a interface core.AgentBrain usando 'any'
+// Run executes the Open Finance specialist agent logic
 func (b *Brain) Run(
 	ctx context.Context,
 	client any,
@@ -21,12 +21,13 @@ func (b *Brain) Run(
 	ragContext string,
 ) (core.ActionPlan, error) {
 
-	// Type Assertion: converte o client genérico para o cliente real da LLM
+	// Type Assertion: retrieve the specific LLM client interface
 	llmClient := client.(llm.Client)
 
 	systemPrompt := buildSystemPrompt(ragContext)
 	userPrompt := buildUserPrompt(history, userMessage)
 
+	// Execute LLM text generation
 	raw, err := llmClient.GenerateText(ctx, traceID, systemPrompt, userPrompt)
 	if err != nil {
 		return core.ActionPlan{}, err
@@ -34,13 +35,13 @@ func (b *Brain) Run(
 
 	var plan core.ActionPlan
 	if err := json.Unmarshal([]byte(raw), &plan); err != nil {
-		return core.ActionPlan{}, fmt.Errorf("invalid ActionPlan JSON: %w", err)
+		return core.ActionPlan{}, fmt.Errorf("failed to decode ActionPlan JSON: %w", err)
 	}
 
 	return plan, nil
 }
 
-// buildSystemPrompt foca nas REGRAS e CONTEXTO RAG
+// buildSystemPrompt defines behavioral guidelines and RAG context
 func buildSystemPrompt(ragContext string) string {
 	return fmt.Sprintf(`Você é o Agent de Open Finance do Jota.
 
@@ -68,7 +69,7 @@ Base de conhecimento (RAG):
 %s`, ragContext)
 }
 
-// buildUserPrompt foca na DINÂMICA da conversa atual
+// buildUserPrompt formats history and current message for the model
 func buildUserPrompt(history []core.ChatMessage, userMessage string) string {
 	h := ""
 	for _, msg := range history {

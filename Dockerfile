@@ -1,35 +1,36 @@
-# ESTÁGIO 1: Build
+# STAGE 1: Build
 FROM golang:1.24-alpine AS builder
 
-# Define o diretório de trabalho
+# Set the working directory inside the container
 WORKDIR /app
 
-# Copia os arquivos de dependências primeiro (otimiza o cache do Docker)
+# Copy dependency files first to leverage Docker cache optimization
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copia o restante do código
+# Copy the rest of the application source code
 COPY . .
 
-# Compila o binário estático (CGO_ENABLED=0 garante que rode em qualquer linux)
+# Compile the static binary
+# CGO_ENABLED=0 ensures the binary is statically linked and portable
 RUN CGO_ENABLED=0 GOOS=linux go build -o jota-server ./cmd/server/main.go
 
-# ESTÁGIO 2: Execução (Imagem final limpa)
+# STAGE 2: Runtime (Clean final image)
 FROM alpine:latest
 
 WORKDIR /app
 
-# Instala certificados CA (necessário para chamadas HTTPS da API do Gemini)
+# Install CA certificates (required for secure HTTPS calls to Gemini API)
 RUN apk --no-cache add ca-certificates
 
-# Copia apenas o binário do estágio de build
+# Copy only the compiled binary from the builder stage
 COPY --from=builder /app/jota-server .
 
-# Copia a base de conhecimento (RAG)
+# Copy the knowledge base (RAG source)
 COPY --from=builder /app/kb ./kb
 
-# Expõe a porta do servidor
+# Expose the application port
 EXPOSE 8080
 
-# Comando para rodar a aplicação
+# Run the application
 CMD ["./jota-server"]

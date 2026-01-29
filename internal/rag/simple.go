@@ -7,18 +7,21 @@ import (
 	"strings"
 )
 
+// Chunk represents a segment of the knowledge base for retrieval
 type Chunk struct {
 	Title   string
 	Content string
 	Score   int
 }
 
+// Retriever handles keyword-based search over markdown documents
 type Retriever struct {
 	path     string
 	fullText string
 	chunks   []Chunk
 }
 
+// NewRetriever initializes the knowledge base by parsing a markdown file
 func NewRetriever(path string) (*Retriever, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -35,6 +38,7 @@ func NewRetriever(path string) (*Retriever, error) {
 	}, nil
 }
 
+// Search performs a token-based ranking over document chunks
 func (r *Retriever) Search(query string, topK int) []Chunk {
 	qTokens := tokenize(query)
 	if len(qTokens) == 0 {
@@ -51,6 +55,7 @@ func (r *Retriever) Search(query string, topK int) []Chunk {
 		}
 	}
 
+	// Rank results by relevance score
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].Score > results[j].Score
 	})
@@ -61,11 +66,12 @@ func (r *Retriever) Search(query string, topK int) []Chunk {
 	return results[:topK]
 }
 
+// splitMarkdownByHeadings breaks the markdown into chunks based on H1-H6 headers
 func splitMarkdownByHeadings(md string) []Chunk {
 	lines := strings.Split(md, "\n")
 	var chunks []Chunk
 
-	currentTitle := "Documento"
+	currentTitle := "General Document"
 	var buf []string
 
 	headingRe := regexp.MustCompile(`^\s{0,3}(#{1,6})\s+(.+?)\s*$`)
@@ -94,14 +100,15 @@ func splitMarkdownByHeadings(md string) []Chunk {
 	return chunks
 }
 
+// tokenize cleans and filters the query string for better matching
 func tokenize(s string) []string {
 	s = strings.ToLower(s)
-	// remove pontuação básica
+	// Remove basic punctuation
 	re := regexp.MustCompile(`[^\p{L}\p{N}\s]+`)
 	s = re.ReplaceAllString(s, " ")
 	parts := strings.Fields(s)
 
-	// remove stopwords básicas (pode melhorar depois)
+	// Basic stopwords for Portuguese/Common terms
 	stop := map[string]bool{
 		"o": true, "a": true, "os": true, "as": true, "de": true, "da": true, "do": true,
 		"e": true, "em": true, "para": true, "por": true, "um": true, "uma": true,
@@ -117,6 +124,7 @@ func tokenize(s string) []string {
 	return out
 }
 
+// scoreChunk counts keyword occurrences in a text block
 func scoreChunk(qTokens []string, text string) int {
 	t := strings.ToLower(text)
 	score := 0
@@ -128,6 +136,7 @@ func scoreChunk(qTokens []string, text string) int {
 	return score
 }
 
+// AsText returns the full raw knowledge base content
 func (r *Retriever) AsText() string {
 	if r == nil {
 		return ""
@@ -135,14 +144,15 @@ func (r *Retriever) AsText() string {
 	return r.fullText
 }
 
+// SearchAsText formats the search results for LLM injection
 func (r *Retriever) SearchAsText(query string, topK int) string {
 	chunks := r.Search(query, topK)
 	if len(chunks) == 0 {
-		return "Nenhuma informação relevante encontrada na base de conhecimento."
+		return "No relevant information found in the knowledge base."
 	}
 
 	var sb strings.Builder
-	sb.WriteString("Contexto extraído da Base de Conhecimento:\n")
+	sb.WriteString("Knowledge Base Context:\n")
 	for _, c := range chunks {
 		sb.WriteString("\n--- " + c.Title + " ---\n")
 		sb.WriteString(c.Content + "\n")

@@ -11,6 +11,7 @@ import (
 )
 
 func main() {
+	// Load environment variables from .env file
 	_ = godotenv.Load()
 
 	port := os.Getenv("PORT")
@@ -19,17 +20,20 @@ func main() {
 	}
 	addr := ":" + port
 
+	// Initialize Gemini LLM client
 	g, err := gemini.New()
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	// Set global LLM client for handlers
 	api.SetLLMClient(g)
 
+	// Route definitions
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", api.HealthHandler)
-	mux.HandleFunc("/messages", api.MessagesHandler)
-	mux.HandleFunc("/metrics", api.MetricsHandler)
+	mux.HandleFunc("/health", api.HealthHandler)     // Service health check
+	mux.HandleFunc("/messages", api.MessagesHandler) // Main chat and orchestration endpoint
+	mux.HandleFunc("/metrics", api.MetricsHandler)   // Telemetry and ProdOps KPIs
 
 	log.Printf("Server running on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, mux))

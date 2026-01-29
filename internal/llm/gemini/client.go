@@ -9,9 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"google.golang.org/genai"
-
 	"github.com/bonettibruno/Jota_ProdOps/internal/llm"
+	"google.golang.org/genai"
 )
 
 type Client struct {
@@ -19,6 +18,7 @@ type Client struct {
 	c     *genai.Client
 }
 
+// New initializes a new Gemini client using API keys from environment variables
 func New() (*Client, error) {
 	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey == "" {
@@ -40,6 +40,7 @@ func New() (*Client, error) {
 	return &Client{model: model, c: c}, nil
 }
 
+// RouteAgent determines which specialized agent should handle the user request
 func (g *Client) RouteAgent(ctx context.Context, traceID string, message string, history []string) (llm.RouterDecision, error) {
 	system := `Você é o roteador do Jota. 
 Sua saída deve ser EXCLUSIVAMENTE um JSON no formato: {"agent": "nome_do_agente"}
@@ -52,16 +53,16 @@ Agentes disponíveis:
 
 	var sb strings.Builder
 	sb.WriteString("trace_id: " + traceID + "\n\n")
-	sb.WriteString("Histórico recente:\n")
+	sb.WriteString("Recent history:\n")
 	for i := 0; i < len(history) && i < 6; i++ {
 		sb.WriteString("- " + history[i] + "\n")
 	}
-	sb.WriteString("\nMensagem atual:\n" + message + "\n")
+	sb.WriteString("\nCurrent message:\n" + message + "\n")
 
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
-	// Usando configuração de JSON para garantir saída limpa
+	// Enforce JSON output via Gemini native configuration
 	resp, err := g.c.Models.GenerateContent(
 		ctx,
 		g.model,
@@ -78,7 +79,7 @@ Agentes disponíveis:
 	log.Printf("trace=%s event=router_raw_output text=%s", traceID, rawText)
 
 	var dec llm.RouterDecision
-	if err := json.Unmarshal([]byte(resp.Text()), &dec); err != nil {
+	if err := json.Unmarshal([]byte(rawText), &dec); err != nil {
 		return llm.RouterDecision{}, fmt.Errorf("router JSON parse failed: %w", err)
 	}
 
@@ -89,7 +90,7 @@ Agentes disponíveis:
 	return dec, nil
 }
 
-// GenerateText atualizado para suportar System Prompt e JSON nativo
+// GenerateText sends a prompt to the LLM with system instructions and JSON response format
 func (g *Client) GenerateText(
 	ctx context.Context,
 	traceID string,
@@ -120,17 +121,4 @@ func (g *Client) GenerateText(
 	}
 
 	return resp.Text(), nil
-}
-
-func stripCodeFences(s string) string {
-	s = strings.TrimSpace(s)
-	if strings.HasPrefix(s, "```") {
-		if idx := strings.Index(s, "\n"); idx != -1 {
-			s = s[idx+1:]
-		}
-		if end := strings.LastIndex(s, "```"); end != -1 {
-			s = s[:end]
-		}
-	}
-	return strings.TrimSpace(s)
 }

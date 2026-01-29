@@ -11,10 +11,10 @@ import (
 
 type Brain struct{}
 
-// Mudamos para 'client any' para bater com a interface do core.AgentBrain
+// Run executes the Onboarding Specialist (Account Creation) agent logic
 func (b *Brain) Run(ctx context.Context, client any, traceID string, history []core.ChatMessage, userMessage string, ragContext string) (core.ActionPlan, error) {
 
-	// Type Assertion: recuperamos o tipo real do cliente
+	// Type Assertion: retrieve the specific LLM client interface
 	llmClient := client.(llm.Client)
 
 	system := fmt.Sprintf(`Você é o Especialista em Onboarding (Criação de Conta) do Jota.
@@ -43,7 +43,7 @@ RESPOSTA EXCLUSIVAMENTE EM JSON:
 Base de conhecimento:
 %s`, ragContext)
 
-	// Usamos o llmClient convertido
+	// Execute LLM text generation
 	raw, err := llmClient.GenerateText(ctx, traceID, system, userMessage)
 	if err != nil {
 		return core.ActionPlan{}, err
@@ -51,7 +51,7 @@ Base de conhecimento:
 
 	var plan core.ActionPlan
 	if err := json.Unmarshal([]byte(raw), &plan); err != nil {
-		return core.ActionPlan{}, fmt.Errorf("erro no unmarshal do plano: %w", err)
+		return core.ActionPlan{}, fmt.Errorf("failed to unmarshal ActionPlan: %w", err)
 	}
 
 	return plan, nil

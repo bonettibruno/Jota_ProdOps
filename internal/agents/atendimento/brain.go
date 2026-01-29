@@ -6,13 +6,14 @@ import (
 	"fmt"
 
 	"github.com/bonettibruno/Jota_ProdOps/internal/core"
-	"github.com/bonettibruno/Jota_ProdOps/internal/llm" // Importante para o cast
+	"github.com/bonettibruno/Jota_ProdOps/internal/llm"
 )
 
 type Brain struct{}
 
+// Run executes the General Assistance (Aline) agent logic
 func (b *Brain) Run(ctx context.Context, client any, traceID string, history []core.ChatMessage, userMessage string, ragContext string) (core.ActionPlan, error) {
-	// O SEGREDO: Converte o client (any) para o tipo real (llm.Client)
+	// Cast generic client to the specific LLM client interface
 	llmClient := client.(llm.Client)
 
 	system := fmt.Sprintf(`Você é a Aline, a assistente virtual inteligente do Jota. 
@@ -41,7 +42,7 @@ IMPORTANTE:
 Base de conhecimento (RAG):
 %s`, ragContext)
 
-	// Agora usamos llmClient (que é do tipo llm.Client)
+	// Call LLM generator
 	raw, err := llmClient.GenerateText(ctx, traceID, system, userMessage)
 	if err != nil {
 		return core.ActionPlan{}, err
@@ -49,7 +50,7 @@ Base de conhecimento (RAG):
 
 	var plan core.ActionPlan
 	if err := json.Unmarshal([]byte(raw), &plan); err != nil {
-		return core.ActionPlan{}, fmt.Errorf("erro ao decodificar JSON da Aline: %w", err)
+		return core.ActionPlan{}, fmt.Errorf("failed to decode Aline's JSON: %w", err)
 	}
 
 	return plan, nil

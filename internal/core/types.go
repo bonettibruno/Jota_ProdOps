@@ -5,14 +5,14 @@ import (
 	"time"
 )
 
-// ChatMessage representa uma mensagem no histórico
+// ChatMessage represents a single interaction in the conversation history
 type ChatMessage struct {
 	Role      string    `json:"role"`
 	Text      string    `json:"text"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
-// ActionPlan é o contrato de saída das LLMs
+// ActionPlan defines the schema for LLM decision-making and routing
 type ActionPlan struct {
 	Action        string  `json:"action"`
 	Message       string  `json:"message"`
@@ -22,12 +22,13 @@ type ActionPlan struct {
 	Confidence    float64 `json:"confidence"`
 }
 
-// AgentBrain simplificado para aceitar o cliente como 'any'
+// AgentBrain defines the interface for specialized agent logic
 type AgentBrain interface {
+	// Run executes the agent's logic and returns an ActionPlan
 	Run(ctx context.Context, client any, traceID string, history []ChatMessage, userMessage string, ragContext string) (ActionPlan, error)
 }
 
-// Citation representa uma fonte do RAG
+// Citation represents a reference from the Knowledge Base (RAG)
 type Citation struct {
 	Source  string `json:"source"`
 	Title   string `json:"title"`
