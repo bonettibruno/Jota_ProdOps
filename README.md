@@ -168,6 +168,94 @@ Após subir o container (`docker compose up`), é possível validar a inteligên
 
 ---
 
+# 🧪 Caso de Teste Exploratório — Conversa Livre com Transbordo Automático
+
+Este caso de teste foi pensado para **exploração manual** do comportamento agentico do Jota AI.  
+A ideia é conversar naturalmente com a IA e observar como o **orquestrador realiza o handoff silencioso** entre agentes, sem que o usuário precise saber qual especialista está ativo.
+
+Durante a conversa, o sistema pode:
+- Iniciar em um agente generalista
+- Transbordar automaticamente para um agente de segurança
+- Evoluir para um agente operacional ou de suporte
+- Decidir sozinho quando escalar ou coletar mais dados
+
+### Objetivo do teste
+- Validar **mudança automática de agentes**
+- Avaliar coerência do contexto entre mensagens
+- Observar decisões de Action (`reply`, `ask`, `call_api`, `escalate`)
+- Conferir telemetria de `handoffs`
+
+---
+
+### Exemplo de Conversa (Passo a Passo)
+
+#### 1️⃣ Início — Conversa aberta
+```bash
+curl -X POST http://localhost:8080/messages -H "Content-Type: application/json" -d '{
+  "conversation_id": "user-explore-001",
+  "message": "Oi, acho que aconteceu algo estranho com uma transferência que fiz hoje."
+}'
+```
+
+**Comportamento esperado:**
+- IA responde com perguntas de esclarecimento
+- `action`: `"ask"`
+- Agente inicial (generalista ou triagem)
+
+---
+
+#### 2️⃣ Indício de fraude
+```bash
+curl -X POST http://localhost:8080/messages -H "Content-Type: application/json" -d '{
+  "conversation_id": "user-explore-001",
+  "message": "Foi um Pix e a pessoa sumiu depois que recebeu."
+}'
+```
+
+**Comportamento esperado:**
+- Handoff silencioso para **Agente de Segurança**
+- Contexto preservado
+- `action`: `"ask"` ou `"reply"`
+
+---
+
+#### 3️⃣ Confirmação de golpe
+```bash
+curl -X POST http://localhost:8080/messages -H "Content-Type: application/json" -d '{
+  "conversation_id": "user-explore-001",
+  "message": "Sim, eu já registrei um boletim de ocorrência."
+}'
+```
+
+**Comportamento esperado:**
+- IA reconhece pré-requisitos do MED
+- `action`: `"call_api"`
+- Execução do fluxo de protocolo MED
+- Incremento de `total_handoffs` e `requests_by_agent=seguranca`
+
+---
+
+#### 4️⃣ Continuidade da conversa
+```bash
+curl -X POST http://localhost:8080/messages -H "Content-Type: application/json" -d '{
+  "conversation_id": "user-explore-001",
+  "message": "Tem mais alguma coisa que eu precise fazer agora?"
+}'
+```
+
+**Comportamento esperado:**
+- IA mantém o agente correto ativo
+- Resposta orientativa clara
+- Possível `action`: `"reply"` ou `"collect_data"`
+
+---
+
+## 🧪 Como Testar os Fluxos Principais
+
+Após subir o container (`docker compose up`), é possível validar a inteligência dos agentes, o roteamento do orquestrador e a execução das **Actions** utilizando chamadas `curl`.
+
+---
+
 ### 1️⃣ Fluxo de Segurança — Mecanismo MED
 
 Este teste valida se a IA:
