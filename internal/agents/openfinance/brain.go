@@ -9,13 +9,19 @@ import (
 	"github.com/bonettibruno/Jota_ProdOps/internal/llm"
 )
 
-type ActionPlan struct {
-	Action        string  `json:"action"`
-	Message       string  `json:"message,omitempty"`
-	NextQuestion  string  `json:"next_question,omitempty"`
-	ChangeAgent   string  `json:"change_agent,omitempty"`
-	HandoffReason string  `json:"handoff_reason,omitempty"`
-	Confidence    float64 `json:"confidence"`
+// Novo: Permite registrar este agente no Handler
+type Brain struct{}
+
+func (b *Brain) Run(
+	ctx context.Context,
+	client llm.Client,
+	traceID string,
+	history []core.ChatMessage,
+	userMessage string,
+	ragContext string,
+) (core.ActionPlan, error) {
+	// Apenas redireciona para a sua função RunBrain que já funciona
+	return RunBrain(ctx, client, traceID, history, userMessage, ragContext)
 }
 
 func RunBrain(
@@ -25,28 +31,25 @@ func RunBrain(
 	history []core.ChatMessage,
 	userMessage string,
 	ragContext string,
-) (ActionPlan, error) {
+) (core.ActionPlan, error) {
 
 	systemPrompt := buildSystemPrompt(ragContext)
 	userPrompt := buildUserPrompt(history, userMessage)
 
-	// Agora enviamos System e User separados
 	raw, err := client.GenerateText(ctx, traceID, systemPrompt, userPrompt)
 	if err != nil {
-		return ActionPlan{}, err
+		return core.ActionPlan{}, err
 	}
 
-	var plan ActionPlan
+	var plan core.ActionPlan // Usando a do core
 	if err := json.Unmarshal([]byte(raw), &plan); err != nil {
-		return ActionPlan{}, fmt.Errorf("invalid ActionPlan JSON: %w\nraw=%s", err, raw)
-	}
-
-	if plan.Action == "" {
-		return ActionPlan{}, fmt.Errorf("action plan sem action")
+		return core.ActionPlan{}, fmt.Errorf("invalid ActionPlan JSON: %w", err)
 	}
 
 	return plan, nil
 }
+
+// ... as funções buildSystemPrompt e buildUserPrompt continuam IGUAIS abaixo
 
 // buildSystemPrompt foca nas REGRAS e CONTEXTO RAG
 func buildSystemPrompt(ragContext string) string {

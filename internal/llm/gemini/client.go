@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -40,14 +41,14 @@ func New() (*Client, error) {
 }
 
 func (g *Client) RouteAgent(ctx context.Context, traceID string, message string, history []string) (llm.RouterDecision, error) {
-	system := `Você é um roteador de atendimento do Jota.
-Escolha exatamente UM agente entre:
-- atendimento_geral
-- criacao_conta
-- open_finance
-- golpe_med
+	system := `Você é o roteador do Jota. 
+Sua saída deve ser EXCLUSIVAMENTE um JSON no formato: {"agent": "nome_do_agente"}
 
-Responda SOMENTE com JSON válido.`
+Agentes disponíveis:
+- atendimento_geral (assuntos diversos)
+- open_finance (conexão de bancos, compartilhamento de dados)
+- golpe_med (vítima de golpe, Pix fraudulento, roubo)
+- criacao_conta (abertura de conta)`
 
 	var sb strings.Builder
 	sb.WriteString("trace_id: " + traceID + "\n\n")
@@ -73,9 +74,16 @@ Responda SOMENTE com JSON válido.`
 		return llm.RouterDecision{}, err
 	}
 
+	rawText := resp.Text()
+	log.Printf("trace=%s event=router_raw_output text=%s", traceID, rawText)
+
 	var dec llm.RouterDecision
 	if err := json.Unmarshal([]byte(resp.Text()), &dec); err != nil {
 		return llm.RouterDecision{}, fmt.Errorf("router JSON parse failed: %w", err)
+	}
+
+	if dec.Agent == "" {
+		dec.Agent = "atendimento_geral"
 	}
 
 	return dec, nil
@@ -92,7 +100,6 @@ func (g *Client) GenerateText(
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	// Correção aqui: SystemInstruction espera um *genai.Content
 	config := &genai.GenerateContentConfig{
 		SystemInstruction: &genai.Content{
 			Parts: []*genai.Part{
@@ -115,8 +122,6 @@ func (g *Client) GenerateText(
 	return resp.Text(), nil
 }
 
-// Mantido para compatibilidade caso o RouteAgent ainda precise,
-// embora com ResponseMIMEType ele se torne menos necessário.
 func stripCodeFences(s string) string {
 	s = strings.TrimSpace(s)
 	if strings.HasPrefix(s, "```") {

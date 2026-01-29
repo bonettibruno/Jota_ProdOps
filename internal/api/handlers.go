@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/bonettibruno/Jota_ProdOps/internal/agents/atendimento"
+	"github.com/bonettibruno/Jota_ProdOps/internal/agents/criacaoconta"
+	"github.com/bonettibruno/Jota_ProdOps/internal/agents/golpemed"
 	"github.com/bonettibruno/Jota_ProdOps/internal/agents/openfinance"
 	"github.com/bonettibruno/Jota_ProdOps/internal/core"
 	"github.com/bonettibruno/Jota_ProdOps/internal/llm"
@@ -40,6 +43,13 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 var store = core.NewConversationStore(20)
 var retriever *rag.Retriever
 
+var brains = map[string]core.AgentBrain{
+	"open_finance":      &openfinance.Brain{},
+	"golpe_med":         &golpemed.Brain{},
+	"atendimento_geral": &atendimento.Brain{},
+	"criacao_conta":     &criacaoconta.Brain{},
+}
+
 func init() {
 	r, err := rag.NewRetriever("kb/RAG_JOTA_RESUMIDO.md")
 	if err != nil {
@@ -64,7 +74,6 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Decode da Request (o que faz o 'req' parar de ficar vermelho)
 	var req MessageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Printf("trace=%s event=bad_json error=%v", traceID, err)
@@ -77,93 +86,159 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Registro da mensagem e busca de histórico
+	// 2. Registro da mensagem do usuário no store
 	store.Add(req.ConversationID, core.ChatMessage{
 		Role:      "user",
 		Text:      req.Message,
 		Timestamp: time.Now(),
 	})
-	history := store.Get(req.ConversationID)
 
+	// 3. Recuperar histórico para o Roteador e Brains
+	history := store.Get(req.ConversationID)
 	var historyTexts []string
 	for _, h := range history {
 		historyTexts = append(historyTexts, h.Role+": "+h.Text)
 	}
 
-	// 4. Lógica de Roteamento
+	// 4. Lógica de Roteamento (Sticky Agent)
 	agent, ok := store.GetAgent(req.ConversationID)
 	if !ok {
 		agent = "atendimento_geral"
 		if llmClient != nil {
 			decision, err := llmClient.RouteAgent(r.Context(), traceID, req.Message, historyTexts)
-			if err == nil {
+			if err == nil && decision.Agent != "" {
 				agent = decision.Agent
 				store.SetAgent(req.ConversationID, agent)
+				log.Printf("trace=%s event=agent_routed decision=%s", traceID, agent)
+			} else if err != nil {
+				log.Printf("trace=%s event=routing_error error=%v", traceID, err)
 			}
 		}
 	}
 
-	var citations []core.Citation
-	var reply string
+	var finalReply string
 	var currentAction string = "reply"
 
-	// 5. Execução do Agent Brain
-	if agent == "open_finance" && llmClient != nil {
+	// 5. Execução do Agent Brain com RECURSIVIDADE (Loop de Handoff)
+	for i := 0; i < 2; i++ {
+		brain, exists := brains[agent]
+
+		// Se não existir cérebro para o agente (ex: atendimento_geral sem brain), usa legado
+		if !exists || llmClient == nil {
+			log.Printf("trace=%s event=using_legacy_reply agent=%s", traceID, agent)
+			finalReply += core.GenerateReply(agent, history)
+			break
+		}
+
 		ragText := ""
 		if retriever != nil {
-			ragText = retriever.AsText() // Certifique-se que este método existe no seu rag/simple.go
+			ragText = retriever.AsText()
 		}
 
-		plan, err := openfinance.RunBrain(r.Context(), llmClient, traceID, history, req.Message, ragText)
+		// Chama o Brain do agente atual
+		plan, err := brain.Run(r.Context(), llmClient, traceID, history, req.Message, ragText)
 		if err != nil {
-			log.Printf("trace=%s event=agent_brain_failed error=%v", traceID, err)
-			reply = core.GenerateReply(agent, history)
-		} else {
-			currentAction = plan.Action
-			switch plan.Action {
-			case "reply", "ask":
-				reply = plan.Message
-				if plan.NextQuestion != "" {
-					reply += "\n\n" + plan.NextQuestion
-				}
-			case "change_agent":
-				if plan.ChangeAgent != "" {
-					store.SetAgent(req.ConversationID, plan.ChangeAgent)
-					reply = "Entendi. Vou te transferir para o especialista em " + plan.ChangeAgent + "."
-					agent = plan.ChangeAgent
-				}
-			case "escalate":
-				reply = plan.Message
-			default:
-				reply = plan.Message
+			log.Printf("trace=%s event=brain_error agent=%s err=%v", traceID, agent, err)
+			finalReply += core.GenerateReply(agent, history)
+			break
+		}
+
+		// LOG DE AÇÃO: Monitoramento detalhado no terminal
+		log.Printf("trace=%s agent=%s action=%s confidence=%.2f target=%s msg_len=%d",
+			traceID, agent, plan.Action, plan.Confidence, plan.ChangeAgent, len(plan.Message))
+
+		currentAction = plan.Action
+
+		// TRATAMENTO DE HANDOFF (Troca de Agente)
+		if plan.Action == "change_agent" {
+			// Acumula a mensagem de "despedida/transferência"
+			if plan.Message != "" {
+				finalReply += plan.Message + "\n\n"
 			}
+
+			newAgent := plan.ChangeAgent
+			if newAgent == "" {
+				newAgent = "atendimento_geral"
+			}
+
+			log.Printf("trace=%s event=executing_handoff from=%s to=%s", traceID, agent, newAgent)
+
+			// Persiste o novo agente no store
+			store.SetAgent(req.ConversationID, newAgent)
+			agent = newAgent
+
+			// Importante: o 'continue' faz o loop rodar novamente com o NOVO 'agent'
+			// O usuário receberá a mensagem do novo agente na mesma resposta.
+			continue
 		}
-	} else {
-		if retriever != nil && core.ShouldUseRAG(agent, req.Message) {
-			reply, citations = core.BuildReplyWithRAG(agent, req.Message, retriever)
-		} else {
-			reply = core.GenerateReply(agent, history)
-		}
+
+		// TRATAMENTO DE RESPOSTA NORMAL (ask, reply, escalate)
+		finalReply += processActionPlan(req.ConversationID, &agent, plan)
+		break // Sai do loop após obter uma resposta final
 	}
 
-	// 6. Finalização
+	// 6. Finalização e Registro da Resposta Acumulada
 	store.Add(req.ConversationID, core.ChatMessage{
 		Role:      "assistant",
-		Text:      reply,
+		Text:      finalReply,
 		Timestamp: time.Now(),
 	})
 
 	w.Header().Set("X-Trace-Id", traceID)
 	w.Header().Set("Content-Type", "application/json")
+
 	resp := MessageResponse{
-		Reply:        reply,
+		Reply:        finalReply,
 		Action:       currentAction,
 		Agent:        agent,
-		HistoryCount: len(history) + 1,
+		HistoryCount: len(store.Get(req.ConversationID)),
 		TraceID:      traceID,
-		Citations:    citations,
 	}
 	_ = json.NewEncoder(w).Encode(resp)
 
-	log.Printf("trace=%s event=replied agent=%s latency=%v", traceID, agent, time.Since(start))
+	log.Printf("trace=%s event=replied agent=%s final_action=%s latency=%v",
+		traceID, agent, currentAction, time.Since(start))
+}
+func processActionPlan(convID string, currentAgent *string, plan core.ActionPlan) string {
+	// 1. Prioridade: Se o agente decidiu trocar, atualizamos o estado
+	if plan.Action == "change_agent" {
+		newAgent := plan.ChangeAgent
+		if newAgent == "" || newAgent == "null" {
+			newAgent = "atendimento_geral" // Fallback de segurança
+		}
+
+		log.Printf("event=executing_handoff conversation_id=%s from=%s to=%s", convID, *currentAgent, newAgent)
+
+		store.SetAgent(convID, newAgent)
+		*currentAgent = newAgent
+
+		// Se a LLM não mandou mensagem de transferência, nós geramos uma
+		if plan.Message == "" {
+			return "Entendido! Vou te transferir para o especialista em " + newAgent + " para continuarmos."
+		}
+		return plan.Message
+	}
+
+	// 2. Tratamento para mensagens de coleta de dados ou perguntas
+	if plan.Action == "ask" || plan.Action == "collect_data" {
+		res := plan.Message
+		if plan.NextQuestion != "" {
+			if res != "" {
+				res += "\n\n"
+			}
+			res += plan.NextQuestion
+		}
+		if res == "" {
+			return "Pode me dar mais detalhes sobre isso para que eu possa te ajudar?"
+		}
+		return res
+	}
+
+	// 3. Fallback: Se nada acima pegou mas tem mensagem, manda a mensagem
+	if plan.Message != "" {
+		return plan.Message
+	}
+
+	// 4. Último recurso para evitar o JSON {"reply": ""}
+	return "Entendi. Como posso te ajudar com isso?"
 }
