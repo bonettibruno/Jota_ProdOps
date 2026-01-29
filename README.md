@@ -162,6 +162,69 @@ Pronto para integração via **Webhooks** com canais como:
 
 ---
 
+## 🧪 Como Testar os Fluxos Principais
+
+Após subir o container (`docker compose up`), é possível validar a inteligência dos agentes, o roteamento do orquestrador e a execução das **Actions** utilizando chamadas `curl`.
+
+---
+
+### 1️⃣ Fluxo de Segurança — Mecanismo MED
+
+Este teste valida se a IA:
+- Identifica um possível golpe
+- Reconhece a existência de B.O.
+- Executa a **Action** de chamada de API para abertura do protocolo MED
+
+```bash
+curl -X POST http://localhost:8080/messages -H "Content-Type: application/json" -d '{
+  "conversation_id": "user-123",
+  "message": "Fui enganado em um Pix de 200 reais. Já registrei o B.O., como o Jota pode me ajudar a recuperar?"
+}'
+```
+
+**Resultado esperado:**
+- `action`: `"call_api"`
+- Mensagem informando o início do protocolo MED
+- Registro de telemetria com identificação do agente de segurança
+
+---
+
+### 2️⃣ Fluxo de Escalação Humana
+
+Testa a sensibilidade da IA para **casos críticos e de alto risco**, como invasão de conta ou fraude em andamento.
+
+```bash
+curl -X POST http://localhost:8080/messages -H "Content-Type: application/json" -d '{
+  "conversation_id": "user-456",
+  "message": "URGENTE! Hackearam meu celular e estão fazendo transferências agora!"
+}'
+```
+
+**Resultado esperado:**
+- `action`: `"escalate"`
+- Interrupção do fluxo automatizado
+- Encaminhamento imediato para suporte humano
+- Incremento da métrica de escaladas no `/metrics`
+
+---
+
+### 3️⃣ Monitoramento e Telemetria (ProdOps)
+
+Consulta o estado atual da operação e os indicadores de performance da plataforma.
+
+```bash
+curl http://localhost:8080/metrics
+```
+
+**Resultado esperado:**
+- Retorno em JSON contendo métricas como:
+  - `total_requests`
+  - `total_handoffs`
+  - `requests_by_agent`
+  - `total_escalates`
+
+Esses dados permitem acompanhar o comportamento do sistema em tempo real e validar a eficiência do orquestrador e dos agentes especialistas.
+
 ## 🛠️ Tecnologias Utilizadas
 
 - **Linguagem:** Go (Golang) 1.24  
