@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bonettibruno/Jota_ProdOps/internal/core"
+	"github.com/bonettibruno/Jota_ProdOps/internal/llm"
 	"github.com/bonettibruno/Jota_ProdOps/internal/rag"
 )
 
@@ -22,6 +23,12 @@ type MessageResponse struct {
 	HistoryCount int             `json:"history_count"`
 	TraceID      string          `json:"trace_id"`
 	Citations    []core.Citation `json:"citations,omitempty"`
+}
+
+var llmClient llm.Client
+
+func SetLLMClient(c llm.Client) {
+	llmClient = c
 }
 
 func HealthHandler(w http.ResponseWriter, r *http.Request) {
@@ -79,13 +86,47 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 
 	history := store.Get(req.ConversationID)
 
+	var historyTexts []string
+	for _, h := range history {
+		historyTexts = append(historyTexts, h.Role+": "+h.Text)
+	}
+
 	agent, ok := store.GetAgent(req.ConversationID)
 	if !ok {
-		agent = core.RouteAgent(req.Message)
+		agent = "atendimento_geral"
+
+		if llmClient == nil {
+			log.Printf("trace=%s event=llm_client_missing fallback_agent=%s", traceID, agent)
+		} else {
+			decision, err := llmClient.RouteAgent(
+				r.Context(),
+				traceID,
+				req.Message,
+				historyTexts,
+			)
+			if err != nil {
+				log.Printf("trace=%s event=agent_route_llm_failed error=%v fallback_agent=%s", traceID, err, agent)
+			} else {
+				agent = decision.Agent
+				log.Printf(
+					"trace=%s event=agent_routed_llm conversation_id=%s agent=%s confidence=%.2f reason=%s",
+					traceID,
+					req.ConversationID,
+					agent,
+					decision.Confidence,
+					decision.Reason,
+				)
+			}
+		}
+
 		store.SetAgent(req.ConversationID, agent)
-		log.Printf("trace=%s event=agent_routed conversation_id=%s agent=%s sticky=false", traceID, req.ConversationID, agent)
 	} else {
-		log.Printf("trace=%s event=agent_sticky conversation_id=%s agent=%s sticky=true", traceID, req.ConversationID, agent)
+		log.Printf(
+			"trace=%s event=agent_sticky conversation_id=%s agent=%s sticky=true",
+			traceID,
+			req.ConversationID,
+			agent,
+		)
 	}
 
 	var citations []core.Citation

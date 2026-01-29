@@ -30,11 +30,9 @@ func BuildReplyWithRAG(agent string, userMessage string, retriever *rag.Retrieve
 		contextLines = append(contextLines, fmt.Sprintf("- %s: %s", c.Title, snippet))
 	}
 
-	// Resposta simples: mantém o “tom” por agente e injeta contexto do doc
 	base := AgentReply(agent)
 
 	if len(contextLines) == 0 {
-		// sem achados: devolve base + pedir clarificação
 		return base + " Se puder, me diga mais detalhes para eu te orientar da forma certa.", nil
 	}
 
