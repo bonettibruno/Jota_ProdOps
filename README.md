@@ -1,203 +1,182 @@
-# 🚀 Jota ProdOps – Multi‑Agent System
+# Jota AI — Agentic Orchestration Platform 🚀
 
-Este projeto implementa um **sistema de atendimento inteligente baseado em múltiplos agentes de IA**, desenvolvido para o desafio **Jota ProdOps**. A arquitetura foi pensada para escalar especialistas, manter o código organizado e garantir que cada cliente seja atendido sempre pelo **agente mais adequado**, sem fricção ou respostas duplicadas.
-
----
-
-## 🧠 Visão Geral da Arquitetura
-
-O sistema segue princípios sólidos de engenharia de software, priorizando **baixa complexidade operacional**, **clareza de responsabilidades** e **facilidade de evolução**.
-
-### 🔹 Conceitos‑chave
-
-- **Multi‑Agent System**: cada agente representa um especialista (ex.: atendimento geral, criação de conta, investimentos).
-- **Handoff Silencioso**: a troca de agente ocorre internamente, na mesma requisição HTTP, sem que o cliente perceba.
-- **RAG (Retrieval‑Augmented Generation)**: contexto extraído de arquivos Markdown oficiais para respostas mais precisas.
-- **Baixo Acoplamento & Alta Coesão**: cada agente tem seu próprio “cérebro” isolado.
+O **Jota AI** é uma plataforma de **orquestração de agentes inteligentes** projetada para lidar com fluxos de atendimento complexos, sensíveis e de alta criticidade. Construído em **Go (Golang)**, o sistema prioriza **baixa latência**, **rastreabilidade ponta a ponta** e uma **arquitetura modular**, permitindo a rápida expansão de novas capacidades e especialistas.
 
 ---
 
-## 🏗️ Decisões Técnicas
+## 🧠 Arquitetura do Sistema
 
-### ✅ Modularidade
-Cada agente vive em sua própria pasta dentro de `internal/agents`, contendo apenas o código necessário para sua função.
+A plataforma opera sob o conceito de **Agentes Especialistas**.  
+Em vez de uma única IA generalista, o sistema utiliza um **orquestrador central** que:
 
-### 🔁 Handoff Recursivo
-O **orquestrador** (`handlers.go`) é responsável por:
-- Identificar o agente correto
-- Transferir internamente o controle
-- Executar o agente especialista **na mesma requisição**
+1. Identifica a intenção do usuário  
+2. Decide a próxima ação operacional  
+3. Executa um **silent handoff** (*transbordo silencioso*) para o agente mais qualificado  
 
-Isso evita múltiplas respostas e simplifica o fluxo.
+Esse modelo garante respostas mais precisas, previsíveis e alinhadas ao contexto de negócio.
 
-### 🔌 Inversão de Dependência
-O pacote `core` define **interfaces** compartilhadas, evitando dependências circulares entre:
-- API
-- Agentes
-- LLM
-- RAG
-
-### 📚 RAG em Markdown
-O sistema utiliza arquivos `.md` como base de conhecimento, permitindo:
-- Versionamento simples
-- Fácil auditoria
-- Atualização sem recompilar lógica de IA
-
----
-
-## 📁 Estrutura de Pastas
-
-```text
-.
-├── cmd/
-│   └── server/main.go          # Ponto de entrada (Servidor HTTP)
-├── internal/
-│   ├── agents/                 # Especialistas de domínio (Cérebros da IA)
-│   │   ├── atendimento/
-│   │   ├── criacaoconta/
-│   │   ├── golpemed/
-│   │   └── openfinance/
-│   ├── api/
-│   │   ├── handlers.go         # Orquestrador de mensagens e Loop de Handoff
-│   │   └── trace.go            # Geração de Rastreabilidade (Trace ID)
-│   ├── core/
-│   │   ├── memory.go           # Persistência de histórico em memória
-│   │   └── types.go            # Definições de tipos globais e interfaces
-│   ├── llm/
-│   │   ├── client.go           # Abstração do cliente de IA
-│   │   └── gemini/              # Implementação específica do Google Gemini
-│   └── rag/
-│       └── simple.go           # Motor de busca na base de conhecimento
-├── kb/
-│   └── RAG_JOTA_RESUMIDO.md    # Base de conhecimento técnica
-├── go.mod                      # Dependências do projeto
-├── .env                        # Credenciais e escolha do modelo de LLM
-└── README.md                   # Documentação
+### 🔹 Fluxo Simplificado
 
 ```
+Canal → Orquestrador → Agente Especialista → Resposta / Próxima Ação
+```
+
+---
+
+## ✨ Diferenciais Técnicos
+
+- **RAG (Retrieval‑Augmented Generation)**  
+  Recuperação lexical baseada em Markdown que injeta contexto dinâmico **apenas quando necessário**, reduzindo custo e latência.
+
+- **Action‑Driven Engine**  
+  O sistema não apenas responde. Ele decide a **próxima ação**:
+  - `reply` – responder ao usuário  
+  - `ask` – solicitar mais dados  
+  - `collect_data` – estruturar informações  
+  - `escalate` – acionar intervenção humana  
+
+- **Telemetria de Produção**  
+  Métricas nativas para observabilidade completa do comportamento do sistema e dos agentes.
 
 ---
 
 ## 🛠️ Como Adicionar um Novo Agente
 
-### 1️⃣ Criar a pasta do agente
+O Jota AI foi desenhado para ser **extensível por design**.  
+A criação de um novo agente especialista segue um fluxo simples e padronizado.
 
-```bash
-mkdir internal/agents/investimentos
+### 1️⃣ Criar o *Brain* do Agente
+
+Crie uma nova pasta em:
+
+```
+internal/agents/emprestimos/
 ```
 
----
+Dentro dela, implemente a interface `core.AgentBrain`, definindo:
 
-### 2️⃣ Implementar o Brain
+- System Prompt do agente  
+- Regras de negócio  
+- Tipos de ação que ele pode executar  
 
-Crie o arquivo `brain.go` dentro da pasta do agente:
-
+Exemplo conceitual:
 ```go
-package investimentos
+type Brain struct {}
 
-import (
-    "context"
-    "encoding/json"
-    "fmt"
-
-    "github.com/bonettibruno/Jota_ProdOps/internal/core"
-    "github.com/bonettibruno/Jota_ProdOps/internal/llm"
-)
-
-type Brain struct{}
-
-func (b *Brain) Run(
-    ctx context.Context,
-    client any,
-    traceID string,
-    history []core.ChatMessage,
-    userMessage string,
-    ragContext string,
-) (core.ActionPlan, error) {
-
-    // Conversão do client genérico para o cliente LLM
-    llmClient := client.(llm.Client)
-
-    system := fmt.Sprintf(
-        "Você é o especialista em Investimentos. Contexto oficial: %s",
-        ragContext,
-    )
-
-    raw, err := llmClient.GenerateText(ctx, traceID, system, userMessage)
-    if err != nil {
-        return core.ActionPlan{}, err
-    }
-
-    var plan core.ActionPlan
-    if err := json.Unmarshal([]byte(raw), &plan); err != nil {
-        return core.ActionPlan{}, fmt.Errorf("erro no unmarshal: %w", err)
-    }
-
-    return plan, nil
+func (b *Brain) Think(ctx core.Context) core.Decision {
+    // lógica do agente
 }
 ```
 
 ---
 
-### 3️⃣ Registrar o agente no Orquestrador
+### 2️⃣ Registrar o Agente no Orquestrador
 
-No arquivo `internal/api/handlers.go`, adicione o novo agente ao mapa de cérebros:
+No arquivo:
+
+```
+internal/api/handlers.go
+```
+
+Adicione o novo agente ao mapa de *brains*:
 
 ```go
 var brains = map[string]core.AgentBrain{
-    "atendimento_geral": &atendimento.Brain{},
-    "criacao_conta":     &criacaoconta.Brain{},
-    "investimentos":     &investimentos.Brain{},
+    "emprestimos": &emprestimos.Brain{},
+    // outros agentes
 }
 ```
 
----
-
-### 4️⃣ Instruir a Transferência de Agente
-
-No `brain.go` do **atendimento geral**, inclua o novo agente como opção válida no campo `change_agent` do prompt.
-
-Isso permite que a IA saiba que pode transferir a conversa para o especialista correto.
+Esse é o único ponto de acoplamento com o orquestrador.
 
 ---
 
-## 🚀 Como Executar o Projeto
+### 3️⃣ Atualizar a Base de Conhecimento (RAG)
 
-### 🔑 Configurar a API Key
+Edite o arquivo:
 
-Coloque suas credenciais do Google AI Studio num arquivo .env, seguindo o exemplo. Além disso, escolha o modelo de IA e a porta a ser utilizada.
-
----
-
-### ▶️ Rodar o servidor
-
-```bash
-go run cmd/server/main.go
+```
+kb/RAG_JOTA_RESUMIDO.md
 ```
 
----
+Adicione uma nova seção com cabeçalho Markdown:
 
-### 🧪 Testar a API
-
-```bash
-curl -X POST http://localhost:8080/messages \
-  -H "Content-Type: application/json" \
-  -d '{
-    "conversation_id": "u1",
-    "message": "quero investir"
-  }'
+```md
+# Empréstimos
+Conteúdo relevante para o agente...
 ```
 
----
-
-## 🎯 Benefícios da Arquitetura
-
-- Escalável para novos agentes
-- Fácil manutenção
-- Separação clara de responsabilidades
-- Ideal para ambientes produtivos e regulados
-- Excelente base para evoluir para **ProdOps**, **FinOps** ou **Open Finance**
+O motor de RAG irá **indexar automaticamente** esse conteúdo e disponibilizá‑lo apenas para o agente quando necessário.
 
 ---
 
-📌 **Projeto desenvolvido para o desafio Jota ProdOps**
+## 🚀 Operação e Monitoramento
+
+A plataforma foi construída com foco em **observabilidade real de produção**.
+
+### 🔍 Rastreabilidade
+
+- Cada requisição recebe um `X-Trace-Id`
+- O identificador acompanha toda a execução, mesmo em transbordos entre agentes
+
+### ❤️ Health Check
+
+```
+GET /health
+```
+
+Utilizado para monitoramento por clusters, load balancers e orquestradores.
+
+### 📊 Métricas
+
+```
+GET /metrics
+```
+
+Principais indicadores:
+
+- Volume total de requisições  
+- Taxa de transbordo entre agentes  
+- Tempo médio de resposta por agente  
+- Número de `escalates` (intervenção humana)
+
+---
+
+## 📦 Deploy
+
+O projeto é **100% dockerizado**, utilizando **multi‑stage builds** para gerar imagens leves, seguras e prontas para produção.
+
+### ▶️ Subir a Plataforma
+
+```bash
+docker compose up --build
+```
+
+O servidor será exposto em:
+
+```
+http://localhost:8080
+```
+
+Pronto para integração via **Webhooks** com canais como:
+
+- WhatsApp  
+- Webchat  
+- Aplicações Mobile  
+
+---
+
+## 🛠️ Tecnologias Utilizadas
+
+- **Linguagem:** Go (Golang) 1.24  
+- **LLM Client:** Google Gemini API  
+- **Infraestrutura:** Docker / Docker Compose  
+- **Contexto:** RAG baseado em Markdown  
+- **Observabilidade:** Logs estruturados + métricas nativas  
+
+---
+
+## 📌 Visão Geral
+
+O Jota AI não é apenas um chatbot.  
+É uma **plataforma de decisão agentica**, pensada para ambientes onde **controle, previsibilidade e rastreabilidade** são tão importantes quanto inteligência.
