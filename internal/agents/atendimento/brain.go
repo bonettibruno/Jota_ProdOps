@@ -6,12 +6,15 @@ import (
 	"fmt"
 
 	"github.com/bonettibruno/Jota_ProdOps/internal/core"
-	"github.com/bonettibruno/Jota_ProdOps/internal/llm"
+	"github.com/bonettibruno/Jota_ProdOps/internal/llm" // Importante para o cast
 )
 
 type Brain struct{}
 
-func (b *Brain) Run(ctx context.Context, client llm.Client, traceID string, history []core.ChatMessage, userMessage string, ragContext string) (core.ActionPlan, error) {
+func (b *Brain) Run(ctx context.Context, client any, traceID string, history []core.ChatMessage, userMessage string, ragContext string) (core.ActionPlan, error) {
+	// O SEGREDO: Converte o client (any) para o tipo real (llm.Client)
+	llmClient := client.(llm.Client)
+
 	system := fmt.Sprintf(`Você é a Aline, a assistente virtual inteligente do Jota. 
 Seu papel é recepcionar o cliente e decidir se você resolve o problema ou se transfere para um especialista.
 
@@ -38,12 +41,16 @@ IMPORTANTE:
 Base de conhecimento (RAG):
 %s`, ragContext)
 
-	raw, err := client.GenerateText(ctx, traceID, system, userMessage)
+	// Agora usamos llmClient (que é do tipo llm.Client)
+	raw, err := llmClient.GenerateText(ctx, traceID, system, userMessage)
 	if err != nil {
 		return core.ActionPlan{}, err
 	}
 
 	var plan core.ActionPlan
-	json.Unmarshal([]byte(raw), &plan)
+	if err := json.Unmarshal([]byte(raw), &plan); err != nil {
+		return core.ActionPlan{}, fmt.Errorf("erro ao decodificar JSON da Aline: %w", err)
+	}
+
 	return plan, nil
 }

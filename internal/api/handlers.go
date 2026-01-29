@@ -86,21 +86,20 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Registro da mensagem do usuário no store
+	// 3. Registro da mensagem e busca de histórico
 	store.Add(req.ConversationID, core.ChatMessage{
 		Role:      "user",
 		Text:      req.Message,
 		Timestamp: time.Now(),
 	})
-
-	// 3. Recuperar histórico para o Roteador e Brains
 	history := store.Get(req.ConversationID)
+
 	var historyTexts []string
 	for _, h := range history {
 		historyTexts = append(historyTexts, h.Role+": "+h.Text)
 	}
 
-	// 4. Lógica de Roteamento (Sticky Agent)
+	// 4. Lógica de Roteamento
 	agent, ok := store.GetAgent(req.ConversationID)
 	if !ok {
 		agent = "atendimento_geral"
@@ -116,89 +115,54 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var finalReply string
+	var citations []core.Citation
+	var reply string
 	var currentAction string = "reply"
 
-	// 5. Execução do Agent Brain com RECURSIVIDADE (Loop de Handoff)
-	for i := 0; i < 2; i++ {
-		brain, exists := brains[agent]
+	// 5. Execução do Agent Brain
+	// Certifique-se de que 'agent' aqui vale exatamente "golpe_med"
+	brain, exists := brains[agent]
 
-		// Se não existir cérebro para o agente (ex: atendimento_geral sem brain), usa legado
-		if !exists || llmClient == nil {
-			log.Printf("trace=%s event=using_legacy_reply agent=%s", traceID, agent)
-			finalReply += core.GenerateReply(agent, history)
-			break
-		}
-
+	if exists && llmClient != nil {
 		ragText := ""
 		if retriever != nil {
 			ragText = retriever.AsText()
 		}
-
-		// Chama o Brain do agente atual
 		plan, err := brain.Run(r.Context(), llmClient, traceID, history, req.Message, ragText)
 		if err != nil {
 			log.Printf("trace=%s event=brain_error agent=%s err=%v", traceID, agent, err)
-			finalReply += core.GenerateReply(agent, history)
-			break
+			reply = "Desculpe, tive um problema técnico para processar sua solicitação. Pode repetir, por favor?"
+		} else {
+			currentAction = plan.Action
+			reply = processActionPlan(req.ConversationID, &agent, plan)
 		}
-
-		// LOG DE AÇÃO: Monitoramento detalhado no terminal
-		log.Printf("trace=%s agent=%s action=%s confidence=%.2f target=%s msg_len=%d",
-			traceID, agent, plan.Action, plan.Confidence, plan.ChangeAgent, len(plan.Message))
-
-		currentAction = plan.Action
-
-		// TRATAMENTO DE HANDOFF (Troca de Agente)
-		if plan.Action == "change_agent" {
-			// Acumula a mensagem de "despedida/transferência"
-			if plan.Message != "" {
-				finalReply += plan.Message + "\n\n"
-			}
-
-			newAgent := plan.ChangeAgent
-			if newAgent == "" {
-				newAgent = "atendimento_geral"
-			}
-
-			log.Printf("trace=%s event=executing_handoff from=%s to=%s", traceID, agent, newAgent)
-
-			// Persiste o novo agente no store
-			store.SetAgent(req.ConversationID, newAgent)
-			agent = newAgent
-
-			// Importante: o 'continue' faz o loop rodar novamente com o NOVO 'agent'
-			// O usuário receberá a mensagem do novo agente na mesma resposta.
-			continue
-		}
-
-		// TRATAMENTO DE RESPOSTA NORMAL (ask, reply, escalate)
-		finalReply += processActionPlan(req.ConversationID, &agent, plan)
-		break // Sai do loop após obter uma resposta final
+	} else {
+		log.Printf("trace=%s event=using_legacy_reply agent=%s", traceID, agent)
+		reply = "Olá! Eu sou a Aline do Jota. Como posso te ajudar hoje?"
 	}
 
-	// 6. Finalização e Registro da Resposta Acumulada
+	// 6. Finalização
 	store.Add(req.ConversationID, core.ChatMessage{
 		Role:      "assistant",
-		Text:      finalReply,
+		Text:      reply,
 		Timestamp: time.Now(),
 	})
 
 	w.Header().Set("X-Trace-Id", traceID)
 	w.Header().Set("Content-Type", "application/json")
-
 	resp := MessageResponse{
-		Reply:        finalReply,
+		Reply:        reply,
 		Action:       currentAction,
 		Agent:        agent,
-		HistoryCount: len(store.Get(req.ConversationID)),
+		HistoryCount: len(history) + 1,
 		TraceID:      traceID,
+		Citations:    citations,
 	}
 	_ = json.NewEncoder(w).Encode(resp)
 
-	log.Printf("trace=%s event=replied agent=%s final_action=%s latency=%v",
-		traceID, agent, currentAction, time.Since(start))
+	log.Printf("trace=%s event=replied agent=%s latency=%v", traceID, agent, time.Since(start))
 }
+
 func processActionPlan(convID string, currentAgent *string, plan core.ActionPlan) string {
 	// 1. Prioridade: Se o agente decidiu trocar, atualizamos o estado
 	if plan.Action == "change_agent" {

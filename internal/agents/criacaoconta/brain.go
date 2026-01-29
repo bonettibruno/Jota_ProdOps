@@ -11,7 +11,12 @@ import (
 
 type Brain struct{}
 
-func (b *Brain) Run(ctx context.Context, client llm.Client, traceID string, history []core.ChatMessage, userMessage string, ragContext string) (core.ActionPlan, error) {
+// Mudamos para 'client any' para bater com a interface do core.AgentBrain
+func (b *Brain) Run(ctx context.Context, client any, traceID string, history []core.ChatMessage, userMessage string, ragContext string) (core.ActionPlan, error) {
+
+	// Type Assertion: recuperamos o tipo real do cliente
+	llmClient := client.(llm.Client)
+
 	system := fmt.Sprintf(`Você é o Especialista em Onboarding (Criação de Conta) do Jota.
 Sua identidade técnica é: "criacao_conta".
 
@@ -38,8 +43,8 @@ RESPOSTA EXCLUSIVAMENTE EM JSON:
 Base de conhecimento:
 %s`, ragContext)
 
-	// Nota: Passamos o sistema e o usuário separadamente como seu cliente Gemini espera
-	raw, err := client.GenerateText(ctx, traceID, system, userMessage)
+	// Usamos o llmClient convertido
+	raw, err := llmClient.GenerateText(ctx, traceID, system, userMessage)
 	if err != nil {
 		return core.ActionPlan{}, err
 	}

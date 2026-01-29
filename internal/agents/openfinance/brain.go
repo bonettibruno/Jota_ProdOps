@@ -9,47 +9,36 @@ import (
 	"github.com/bonettibruno/Jota_ProdOps/internal/llm"
 )
 
-// Novo: Permite registrar este agente no Handler
 type Brain struct{}
 
+// Run agora implementa a interface core.AgentBrain usando 'any'
 func (b *Brain) Run(
 	ctx context.Context,
-	client llm.Client,
+	client any,
 	traceID string,
 	history []core.ChatMessage,
 	userMessage string,
 	ragContext string,
 ) (core.ActionPlan, error) {
-	// Apenas redireciona para a sua função RunBrain que já funciona
-	return RunBrain(ctx, client, traceID, history, userMessage, ragContext)
-}
 
-func RunBrain(
-	ctx context.Context,
-	client llm.Client,
-	traceID string,
-	history []core.ChatMessage,
-	userMessage string,
-	ragContext string,
-) (core.ActionPlan, error) {
+	// Type Assertion: converte o client genérico para o cliente real da LLM
+	llmClient := client.(llm.Client)
 
 	systemPrompt := buildSystemPrompt(ragContext)
 	userPrompt := buildUserPrompt(history, userMessage)
 
-	raw, err := client.GenerateText(ctx, traceID, systemPrompt, userPrompt)
+	raw, err := llmClient.GenerateText(ctx, traceID, systemPrompt, userPrompt)
 	if err != nil {
 		return core.ActionPlan{}, err
 	}
 
-	var plan core.ActionPlan // Usando a do core
+	var plan core.ActionPlan
 	if err := json.Unmarshal([]byte(raw), &plan); err != nil {
 		return core.ActionPlan{}, fmt.Errorf("invalid ActionPlan JSON: %w", err)
 	}
 
 	return plan, nil
 }
-
-// ... as funções buildSystemPrompt e buildUserPrompt continuam IGUAIS abaixo
 
 // buildSystemPrompt foca nas REGRAS e CONTEXTO RAG
 func buildSystemPrompt(ragContext string) string {
@@ -83,7 +72,11 @@ Base de conhecimento (RAG):
 func buildUserPrompt(history []core.ChatMessage, userMessage string) string {
 	h := ""
 	for _, msg := range history {
-		h += fmt.Sprintf("%s: %s\n", msg.Role, msg.Text)
+		role := "Cliente"
+		if msg.Role == "assistant" {
+			role = "Você (Especialista)"
+		}
+		h += fmt.Sprintf("%s: %s\n", role, msg.Text)
 	}
 
 	return fmt.Sprintf(`Histórico da conversa:

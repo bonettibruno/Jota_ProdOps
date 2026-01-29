@@ -2,14 +2,7 @@ package core
 
 import (
 	"sync"
-	"time"
 )
-
-type ChatMessage struct {
-	Role      string // "user" ou "assistant"
-	Text      string
-	Timestamp time.Time
-}
 
 type ConversationStore struct {
 	mu     sync.Mutex

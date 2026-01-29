@@ -11,19 +11,24 @@ import (
 
 type Brain struct{}
 
+// Alterado para 'client any' para satisfazer a interface core.AgentBrain
 func (b *Brain) Run(
 	ctx context.Context,
-	client llm.Client,
+	client any,
 	traceID string,
 	history []core.ChatMessage,
 	userMessage string,
 	ragContext string,
 ) (core.ActionPlan, error) {
 
+	// Recupera o tipo real do cliente para usar o GenerateText
+	llmClient := client.(llm.Client)
+
 	systemPrompt := buildSystemPrompt(ragContext)
 	userPrompt := buildUserPrompt(history, userMessage)
 
-	raw, err := client.GenerateText(ctx, traceID, systemPrompt, userPrompt)
+	// Agora usamos o llmClient convertido
+	raw, err := llmClient.GenerateText(ctx, traceID, systemPrompt, userPrompt)
 	if err != nil {
 		return core.ActionPlan{}, err
 	}
