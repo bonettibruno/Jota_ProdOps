@@ -48,24 +48,32 @@ O sistema utiliza arquivos `.md` como base de conhecimento, permitindo:
 ## 📁 Estrutura de Pastas
 
 ```text
-cmd/
- └── server/
-     └── main.go
+.
+├── cmd/
+│   └── server/main.go          # Ponto de entrada (Servidor HTTP)
+├── internal/
+│   ├── agents/                 # Especialistas de domínio (Cérebros da IA)
+│   │   ├── atendimento/
+│   │   ├── criacaoconta/
+│   │   ├── golpemed/
+│   │   └── openfinance/
+│   ├── api/
+│   │   ├── handlers.go         # Orquestrador de mensagens e Loop de Handoff
+│   │   └── trace.go            # Geração de Rastreabilidade (Trace ID)
+│   ├── core/
+│   │   ├── memory.go           # Persistência de histórico em memória
+│   │   └── types.go            # Definições de tipos globais e interfaces
+│   ├── llm/
+│   │   ├── client.go           # Abstração do cliente de IA
+│   │   └── gemini/              # Implementação específica do Google Gemini
+│   └── rag/
+│       └── simple.go           # Motor de busca na base de conhecimento
+├── kb/
+│   └── RAG_JOTA_RESUMIDO.md    # Base de conhecimento técnica
+├── go.mod                      # Dependências do projeto
+├── .env                        # Credenciais e escolha do modelo de LLM
+└── README.md                   # Documentação
 
-internal/
- ├── api/
- │   └── handlers.go        # Orquestrador e handoff
- ├── agents/
- │   ├── atendimento/
- │   ├── criacaoconta/
- │   └── investimentos/
- ├── core/
- │   ├── interfaces.go      # Contratos (AgentBrain, ActionPlan, etc.)
- │   └── conversation.go
- ├── llm/
- │   └── client.go
- └── rag/
-     └── retriever.go
 ```
 
 ---
