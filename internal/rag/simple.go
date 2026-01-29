@@ -134,3 +134,18 @@ func (r *Retriever) AsText() string {
 	}
 	return r.fullText
 }
+
+func (r *Retriever) SearchAsText(query string, topK int) string {
+	chunks := r.Search(query, topK)
+	if len(chunks) == 0 {
+		return "Nenhuma informação relevante encontrada na base de conhecimento."
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Contexto extraído da Base de Conhecimento:\n")
+	for _, c := range chunks {
+		sb.WriteString("\n--- " + c.Title + " ---\n")
+		sb.WriteString(c.Content + "\n")
+	}
+	return sb.String()
+}

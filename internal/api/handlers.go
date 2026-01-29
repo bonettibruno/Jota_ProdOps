@@ -40,6 +40,11 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
+func MetricsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(core.GetMetrics())
+}
+
 var store = core.NewConversationStore(20)
 var retriever *rag.Retriever
 
@@ -63,6 +68,9 @@ func init() {
 func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
+	m := core.GetMetrics()
+
+	// 1. Rastreabilidade: Garantir que toda requisição tenha um ID único
 	traceID := r.Header.Get("X-Trace-Id")
 	if traceID == "" {
 		traceID = newTraceID()
@@ -73,6 +81,7 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 2. Ingestão e Validação
 	var req MessageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Printf("trace=%s event=bad_json error=%v", traceID, err)
@@ -85,10 +94,9 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// --- LOG DE ENTRADA ---
 	log.Printf("trace=%s conv=%s event=request_received msg=\"%s\"", traceID, req.ConversationID, req.Message)
 
-	// Registro inicial da mensagem do usuário
+	// 3. Persistência da entrada do usuário
 	store.Add(req.ConversationID, core.ChatMessage{
 		Role:      "user",
 		Text:      req.Message,
@@ -99,6 +107,17 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 	var currentAction string = "reply"
 	var finalAgent string
 
+	// --- OTIMIZAÇÃO RAG: Busca contextual única para economizar tokens e latência ---
+	ragText := ""
+	if retriever != nil {
+		// Buscamos os 3 trechos mais relevantes da base de conhecimento
+		ragText = retriever.SearchAsText(req.Message, 3)
+		if ragText != "" {
+			log.Printf("trace=%s conv=%s event=rag_retrieval status=success", traceID, req.ConversationID)
+		}
+	}
+
+	// 4. Loop de Orquestração (Policy Engine / Handoff Silencioso)
 	for i := 0; i < 3; i++ {
 		history := store.Get(req.ConversationID)
 
@@ -115,44 +134,56 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		ragText := ""
-		if retriever != nil {
-			ragText = retriever.AsText()
-		}
-
+		// Execução do "Cérebro" do Agente atual
 		plan, err := brain.Run(r.Context(), llmClient, traceID, history, req.Message, ragText)
 		if err != nil {
-			// --- LOG DE ERRO NO BRAIN ---
 			log.Printf("trace=%s conv=%s event=brain_error agent=%s err=%v", traceID, req.ConversationID, agent, err)
-			reply = "Desculpe, tive um problema técnico. Pode repetir?"
+			reply = "Desculpe, tive um problema técnico momentâneo. Pode repetir, por favor?"
 			break
 		}
 
+		// Verifica se o Agente solicitou troca de especialista (Handoff)
 		if plan.Action == "change_agent" {
+			m.IncHandoff()
 			newAgent := plan.ChangeAgent
 			if newAgent == "" || newAgent == "null" {
 				newAgent = "atendimento_geral"
 			}
 
-			// --- LOG DE HANDOFF DETALHADO ---
-			log.Printf("trace=%s conv=%s event=silent_handoff from=%s to=%s", traceID, req.ConversationID, agent, newAgent)
+			log.Printf("trace=%s conv=%s event=silent_handoff from=%s to=%s reason=\"%s\"",
+				traceID, req.ConversationID, agent, newAgent, plan.HandoffReason)
 
 			store.SetAgent(req.ConversationID, newAgent)
-			continue
+			continue // Re-processa com o novo agente sem responder ao usuário ainda
 		}
 
+		// Se chegou aqui, o agente decidiu responder ou agir
 		currentAction = plan.Action
 		reply = finalizeResponse(plan)
 		break
 	}
 
-	// Registro da resposta final
+	// 5. Registro da resposta final na memória
 	store.Add(req.ConversationID, core.ChatMessage{
 		Role:      "assistant",
 		Text:      reply,
 		Timestamp: time.Now(),
 	})
 
+	// Este sinal indica que a IA identificou uma situação que exige um especialista humano
+	if currentAction == "escalate" {
+		m.IncEscalate()
+		fullHistory := store.Get(req.ConversationID)
+
+		log.Printf("trace=%s conv=%s event=HUMAN_INTERVENTION_REQUIRED level=CRITICAL agent=%s reason=\"Ação de risco detectada\"",
+			traceID, req.ConversationID, finalAgent)
+
+		// Aqui você enviaria o 'fullHistory' para o seu sistema de Chat (ex: Intercom/Zendesk)
+		// O humano já recebe a conversa pronta, sem precisar perguntar tudo de novo.
+		_ = fullHistory
+	}
+
+	// 6. Resposta Final para o Canal (WhatsApp/Web)
 	w.Header().Set("X-Trace-Id", traceID)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(MessageResponse{
@@ -163,7 +194,10 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 		TraceID:      traceID,
 	})
 
-	log.Printf("trace=%s conv=%s event=replied agent=%s latency=%v", traceID, req.ConversationID, finalAgent, time.Since(start))
+	m.IncRequest(finalAgent)
+	// Log de Observabilidade: Latência é a métrica principal aqui
+	log.Printf("trace=%s conv=%s event=replied agent=%s action=%s latency=%v",
+		traceID, req.ConversationID, finalAgent, currentAction, time.Since(start))
 }
 
 func finalizeResponse(plan core.ActionPlan) string {
