@@ -129,18 +129,14 @@ Utilizado para monitoramento por clusters, load balancers e orquestradores.
 
 ### 📊 Métricas
 
-```
-GET /metrics
-```
+A plataforma expõe um endpoint nativo de métricas em `GET /metrics`. Este endpoint fornece dados brutos em tempo real, permitindo a extração dos seguintes KPIs operacionais:
 
-Principais indicadores:
+- **Volumetria Total:** (`total_requests`) Quantidade total de interações processadas.
+- **Eficiência de Triagem:** (`total_handoffs`) Volume de trocas de contexto entre agentes especialistas.
+- **Taxa de Escalada Humana:** (`total_escalates`) Identificação de casos críticos que exigiram intervenção manual.
+- **Distribuição de Carga:** (`requests_by_agent`) Monitoramento de qual especialista está sendo mais demandado (ex: Golpe MED vs. Atendimento Geral).
 
-- Volume total de requisições  
-- Taxa de transbordo entre agentes  
-- Tempo médio de resposta por agente  
-- Número de `escalates` (intervenção humana)
-
----
+> **Nota de ProdOps:** Os logs da aplicação também registram a latência individual de cada requisição (`latency=Xms`), permitindo a análise de performance e gargalos de processamento por agente.
 
 ## 📦 Deploy
 
