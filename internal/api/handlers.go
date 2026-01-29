@@ -63,7 +63,6 @@ func init() {
 func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
-	// 1. Setup inicial e Trace ID
 	traceID := r.Header.Get("X-Trace-Id")
 	if traceID == "" {
 		traceID = newTraceID()
@@ -86,62 +85,70 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Registro da mensagem e busca de histórico
+	// Registro inicial da mensagem do usuário
 	store.Add(req.ConversationID, core.ChatMessage{
 		Role:      "user",
 		Text:      req.Message,
 		Timestamp: time.Now(),
 	})
-	history := store.Get(req.ConversationID)
 
-	var historyTexts []string
-	for _, h := range history {
-		historyTexts = append(historyTexts, h.Role+": "+h.Text)
-	}
-
-	// 4. Lógica de Roteamento
-	agent, ok := store.GetAgent(req.ConversationID)
-	if !ok {
-		agent = "atendimento_geral"
-		if llmClient != nil {
-			decision, err := llmClient.RouteAgent(r.Context(), traceID, req.Message, historyTexts)
-			if err == nil && decision.Agent != "" {
-				agent = decision.Agent
-				store.SetAgent(req.ConversationID, agent)
-				log.Printf("trace=%s event=agent_routed decision=%s", traceID, agent)
-			} else if err != nil {
-				log.Printf("trace=%s event=routing_error error=%v", traceID, err)
-			}
-		}
-	}
-
-	var citations []core.Citation
 	var reply string
 	var currentAction string = "reply"
+	var finalAgent string
 
-	// 5. Execução do Agent Brain
-	// Certifique-se de que 'agent' aqui vale exatamente "golpe_med"
-	brain, exists := brains[agent]
+	// LOOP DE PROCESSAMENTO (Máximo 3 iterações para evitar loops infinitos)
+	for i := 0; i < 3; i++ {
+		history := store.Get(req.ConversationID)
 
-	if exists && llmClient != nil {
+		// Determinar o agente atual
+		agent, ok := store.GetAgent(req.ConversationID)
+		if !ok {
+			agent = "atendimento_geral"
+			store.SetAgent(req.ConversationID, agent)
+		}
+		finalAgent = agent
+
+		brain, exists := brains[agent]
+		if !exists || llmClient == nil {
+			reply = "Olá! Eu sou a Aline do Jota. Como posso te ajudar hoje?"
+			break
+		}
+
 		ragText := ""
 		if retriever != nil {
 			ragText = retriever.AsText()
 		}
+
+		// Executa o cérebro do agente
 		plan, err := brain.Run(r.Context(), llmClient, traceID, history, req.Message, ragText)
 		if err != nil {
 			log.Printf("trace=%s event=brain_error agent=%s err=%v", traceID, agent, err)
-			reply = "Desculpe, tive um problema técnico para processar sua solicitação. Pode repetir, por favor?"
-		} else {
-			currentAction = plan.Action
-			reply = processActionPlan(req.ConversationID, &agent, plan)
+			reply = "Desculpe, tive um problema técnico. Pode repetir?"
+			break
 		}
-	} else {
-		log.Printf("trace=%s event=using_legacy_reply agent=%s", traceID, agent)
-		reply = "Olá! Eu sou a Aline do Jota. Como posso te ajudar hoje?"
+
+		// LOGICA DE HANDOFF SILENCIOSO
+		if plan.Action == "change_agent" {
+			newAgent := plan.ChangeAgent
+			if newAgent == "" || newAgent == "null" {
+				newAgent = "atendimento_geral"
+			}
+
+			log.Printf("trace=%s event=silent_handoff from=%s to=%s", traceID, agent, newAgent)
+			store.SetAgent(req.ConversationID, newAgent)
+
+			// O segredo: Não definimos 'reply' aqui.
+			// O loop continuará e chamará o próximo agente imediatamente.
+			continue
+		}
+
+		// Se não foi troca de agente, processamos a resposta final
+		currentAction = plan.Action
+		reply = finalizeResponse(plan)
+		break
 	}
 
-	// 6. Finalização
+	// Registro da resposta final no histórico
 	store.Add(req.ConversationID, core.ChatMessage{
 		Role:      "assistant",
 		Text:      reply,
@@ -150,59 +157,30 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("X-Trace-Id", traceID)
 	w.Header().Set("Content-Type", "application/json")
-	resp := MessageResponse{
+	_ = json.NewEncoder(w).Encode(MessageResponse{
 		Reply:        reply,
 		Action:       currentAction,
-		Agent:        agent,
-		HistoryCount: len(history) + 1,
+		Agent:        finalAgent,
+		HistoryCount: len(store.Get(req.ConversationID)),
 		TraceID:      traceID,
-		Citations:    citations,
-	}
-	_ = json.NewEncoder(w).Encode(resp)
+	})
 
-	log.Printf("trace=%s event=replied agent=%s latency=%v", traceID, agent, time.Since(start))
+	log.Printf("trace=%s event=replied agent=%s latency=%v", traceID, finalAgent, time.Since(start))
 }
 
-func processActionPlan(convID string, currentAgent *string, plan core.ActionPlan) string {
-	// 1. Prioridade: Se o agente decidiu trocar, atualizamos o estado
-	if plan.Action == "change_agent" {
-		newAgent := plan.ChangeAgent
-		if newAgent == "" || newAgent == "null" {
-			newAgent = "atendimento_geral" // Fallback de segurança
-		}
-
-		log.Printf("event=executing_handoff conversation_id=%s from=%s to=%s", convID, *currentAgent, newAgent)
-
-		store.SetAgent(convID, newAgent)
-		*currentAgent = newAgent
-
-		// Se a LLM não mandou mensagem de transferência, nós geramos uma
-		if plan.Message == "" {
-			return "Entendido! Vou te transferir para o especialista em " + newAgent + " para continuarmos."
-		}
-		return plan.Message
-	}
-
-	// 2. Tratamento para mensagens de coleta de dados ou perguntas
+// Auxiliar para limpar a mensagem final sem lógica de troca de agente
+func finalizeResponse(plan core.ActionPlan) string {
+	res := plan.Message
 	if plan.Action == "ask" || plan.Action == "collect_data" {
-		res := plan.Message
 		if plan.NextQuestion != "" {
 			if res != "" {
 				res += "\n\n"
 			}
 			res += plan.NextQuestion
 		}
-		if res == "" {
-			return "Pode me dar mais detalhes sobre isso para que eu possa te ajudar?"
-		}
-		return res
 	}
-
-	// 3. Fallback: Se nada acima pegou mas tem mensagem, manda a mensagem
-	if plan.Message != "" {
-		return plan.Message
+	if res == "" {
+		return "Como posso te ajudar com isso?"
 	}
-
-	// 4. Último recurso para evitar o JSON {"reply": ""}
-	return "Entendi. Como posso te ajudar com isso?"
+	return res
 }
