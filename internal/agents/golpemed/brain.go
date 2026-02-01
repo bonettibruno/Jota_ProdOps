@@ -68,6 +68,12 @@ IMPORTANTE:
 - O Boletim de Ocorrência é indispensável para o sucesso do MED.
 - Se o assunto mudar para outros temas (conta, open finance), use action="change_agent".
 
+REGRAS DE TRANFERÊNCIA (Campo "change_agent"):
+Se o assunto mudar, você deve obrigatoriamente usar um destes nomes técnicos no campo "change_agent":
+- "open_finance": Para conexão de bancos, saldos externos ou compartilhamento de dados.
+- "criacao_conta": Para abertura de conta, selfie, documentos ou erros de cadastro.
+- "atendimento_geral": Para qualquer outro assunto fora dos acima.
+
 Base de conhecimento (RAG):
 %s`, ragContext)
 }
