@@ -119,6 +119,8 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 	// 5. Orchestration Loop (Policy Engine / Silent Handoff)
 	for i := 0; i < 3; i++ {
 		history := store.Get(req.ConversationID)
+		log.Printf("trace=%s conv=%s event=debug_history messages_in_context=%d",
+			traceID, req.ConversationID, len(history))
 
 		agent, ok := store.GetAgent(req.ConversationID)
 		if !ok {
@@ -191,6 +193,8 @@ func MessagesHandler(w http.ResponseWriter, r *http.Request) {
 		HistoryCount: len(store.Get(req.ConversationID)),
 		TraceID:      traceID,
 	})
+
+	store.PrintAll()
 
 	m.IncRequest(finalAgent)
 	log.Printf("trace=%s conv=%s event=replied agent=%s action=%s latency=%v",

@@ -65,3 +65,32 @@ func (s *ConversationStore) SetAgent(convID, agent string) {
 
 	s.agents[convID] = agent
 }
+
+// PrintAll dumps all active conversations to the console for debugging
+func (s *ConversationStore) PrintAll() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	println("\n=== [MEMORY DUMP] ===")
+	for id, messages := range s.items {
+		agent := s.agents[id]
+		if agent == "" {
+			agent = "none"
+		}
+
+		println("ID:", id, "| AGENT:", agent, "| MSGS:", len(messages))
+		for _, m := range messages {
+			role := "U"
+			if m.Role == "assistant" {
+				role = "A"
+			}
+
+			text := m.Text
+			if len(text) > 40 {
+				text = text[:37] + "..."
+			}
+			println("  [" + role + "]: " + text)
+		}
+	}
+	println("=====================\n")
+}

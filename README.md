@@ -261,7 +261,46 @@ curl -X POST http://localhost:8080/messages -H "Content-Type: application/json" 
 
 ---
 
-## 📌 Visão Geral
 
-O Jota AI não é apenas um chatbot.  
-É uma **plataforma de decisão agentica**, pensada para ambientes onde **controle, previsibilidade e rastreabilidade** são tão importantes quanto inteligência.
+## 📜 Script de Teste de carga para usuário enviando várias mensagens antes de receber uma resposta
+
+```bash
+#!/bin/bash
+
+CONV_ID="USER_ANSIOSO_123"
+
+curl -X POST http://localhost:8080/messages \
+  -d "{\"conversation_id\": \"$CONV_ID\", \"message\": \"Oi\"}" &
+
+curl -X POST http://localhost:8080/messages \
+  -d "{\"conversation_id\": \"$CONV_ID\", \"message\": \"Cai num golpe aqui\"}" &
+
+curl -X POST http://localhost:8080/messages \
+  -d "{\"conversation_id\": \"$CONV_ID\", \"message\": \"Foi um pix de 200 reais\"}" &
+
+wait
+
+echo -e "\nTeste finalizado. Verifique o [MEMORY DUMP] no terminal do servidor."
+```
+
+---
+
+## 📝 Próximos Passos (To‑Do)
+
+- **Resolver múltiplas mensagens**  
+  Implementar um mecanismo de espera (ex: aguardar 1–2 segundos após a última mensagem antes de responder).
+
+- **Persistência Estruturada**  
+  Migrar da memória volátil para banco de dados.
+
+- **Extração de Dados e APIs**  
+  Capturar automaticamente dados do chat (valor, chave Pix) e disparar chamadas reais (ex: API do Formulário MED).
+
+- **Integrações Externas**  
+  Conectar o gatilho de `escalate` ao Zendesk para o atendimento humano.
+
+- **Integração com WhatsApp**  
+  Configurar Webhooks para mensagens reais e respostas via API oficial.
+
+- **Observabilidade para Humanos**  
+  Criar painel ou logs estruturados permitindo que o atendente humano visualize todo o histórico gerado pela IA antes de assumir o caso.
